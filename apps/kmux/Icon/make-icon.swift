@@ -79,7 +79,7 @@ func glyphPath(_ s: String, _ f: CTFont) -> CGPath {
     var u = Array(s.utf16)
     var g = [CGGlyph](repeating: 0, count: u.count)
     CTFontGetGlyphsForCharacters(f, &u, &g, u.count)
-    return CTFontCreatePathForGlyph(f, g[0], nil)!
+    return CTFontCreatePathForGlyph(f, g[0], nil) ?? CGMutablePath()   // empty if the font lacks the glyph
 }
 
 func moved(_ p: CGPath, _ dx: CGFloat, _ dy: CGFloat) -> CGPath {
@@ -587,12 +587,26 @@ func v12(_ r: R) { v12Font(r, roundedHeavy, tracking: 10) }
 /// v12 in another font. The font is sized so its x-height matches SF Rounded Heavy at the
 /// original v12 size, so every font alternative has the same optical size; `tracking` is in
 /// 1024 units at large sizes (small sizes add their own).
-func v12Font(_ r: R, _ make: (CGFloat) -> CTFont, tracking: CGFloat, scale: CGFloat = 1) {
+///
+/// `measured` sizes by the ink height of "x" instead of the font's x-height metric (font files
+/// from elsewhere don't always have a trustworthy one) and shrinks the font if "km" would run
+/// wider than v12's safe area.
+func v12Font(_ r: R, _ make: (CGFloat) -> CTFont, tracking: CGFloat, scale: CGFloat = 1, measured: Bool = false) {
     if quadrants(r, darkTile: false) { return }
     kannaTile(r, darkTile: false)
     let base: CGFloat = r.small ? 400 : 330
-    let target = CTFontGetXHeight(roundedHeavy(base)) * scale
-    let f = make(base * target / CTFontGetXHeight(make(base)))
+    func xh(_ f: CTFont) -> CGFloat {
+        let ink = glyphPath("x", f).boundingBoxOfPath.height
+        return measured && ink > 0 && ink.isFinite ? ink : CTFontGetXHeight(f)
+    }
+    let target = xh(roundedHeavy(base)) * scale
+    var size = base * target / xh(make(base))
+    if measured {
+        let km = words([[("k", rgb(0)), ("m", rgb(0))]], make(size), tracking: tracking, lead: 0, centreY: 512, r)
+        let w = km[0].path.boundingBoxOfPath.union(km[1].path.boundingBoxOfPath).width
+        if w > 640 { size *= 640 / w }
+    }
+    let f = make(size)
     let c = rgb(0)
     let gs = words([[("k", c), ("m", c)], [("u", c), ("x", c)]], f, tracking: tracking + (r.small ? 14 : 0),
                    lead: r.small ? 360 : 310, centreY: 512, r)
@@ -675,7 +689,10 @@ func v16(_ r: R) {
 /// Round-two sheet: per variant, 512 / 64 / 32 letters / 32 quadrants / 16 quadrants, on a light
 /// and a dark backdrop.
 func makeSheet2(_ names: [String], _ url: URL) {
-    let vs = names.compactMap { n in variants.first { $0.name == n } }
+    makeSheet2(names.compactMap { n in variants.first { $0.name == n } }, url)
+}
+
+func makeSheet2(_ vs: [Variant], _ url: URL) {
     let pad: CGFloat = 32, labelH: CGFloat = 56
     let half = pad + 512 + pad + 64 + pad + 32 + pad + 32 + pad + 16 + pad
     let rowH = labelH + 512 + 2 * pad
@@ -976,6 +993,77 @@ func render(_ v: Variant, size: Int) -> CGImage {
     return ctx.makeImage()!
 }
 
+// MARK: Font files (v12 in fonts that aren't on the system)
+//
+// --font-file PATH renders v12 in a font file; --font-sheet / --font-shortlist render many from
+// a list written by fetch-icon-fonts.py. Fonts are registered for this process only, never
+// installed.
+
+struct FontEntry { let label: String, path: String, note: String }
+
+func readFontList(_ path: String) -> [FontEntry] {
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { fatalError("can't read \(path)") }
+    let dir = URL(fileURLWithPath: path).deletingLastPathComponent()
+    return text.split(separator: "\n").compactMap { line in
+        let f = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+        guard f.count >= 4 else { return nil }
+        let p = f[1].isEmpty || f[1].hasPrefix("/") ? f[1] : dir.appendingPathComponent(f[1]).path
+        return FontEntry(label: f[0], path: p, note: f[3])
+    }
+}
+
+/// Registers the font for this process (CTFontManager, .process scope) and returns its descriptor.
+func loadFontFile(_ path: String) -> CTFontDescriptor? {
+    let url = URL(fileURLWithPath: path) as CFURL
+    CTFontManagerRegisterFontsForURL(url, .process, nil)
+    return (CTFontManagerCreateFontDescriptorsFromURL(url) as? [CTFontDescriptor])?.first
+}
+
+/// v12 drawn in a font file, or nil plus the reason when the font can't draw "kmux".
+func v12FileVariant(_ e: FontEntry) -> (Variant?, String) {
+    guard !e.path.isEmpty, let d = loadFontFile(e.path) else { return (nil, "FAIL: no font file") }
+    let f = CTFontCreateWithFontDescriptor(d, 100, nil)
+    let missing = ["k", "m", "u", "x"].filter { ch in
+        var u = Array(ch.utf16), g: CGGlyph = 0
+        return !CTFontGetGlyphsForCharacters(f, &u, &g, 1) || g == 0 || glyphPath(ch, f).boundingBoxOfPath.isNull
+    }
+    if !missing.isEmpty { return (nil, "FAIL: no glyph for \(missing.joined(separator: " "))") }
+    let name = (CTFontCopyFullName(f) as String)
+    let v = Variant(name: e.label, palette: light, layout: .stack, note: name,
+                    draw: { r in v12Font(r, { CTFontCreateWithFontDescriptor(d, $0, nil) }, tracking: 0, measured: true) })
+    return (v, name)
+}
+
+/// Grids of v12 in many fonts: each cell is the icon at 256 px, the 32 px icon below it, and
+/// the font's name. Writes PREFIX-01.png, PREFIX-02.png, ... `perSheet` cells each.
+func makeFontSheets(_ entries: [(String, Variant?, String)], prefix: String, perSheet: Int = 20) {
+    let cols = 5, cellW: CGFloat = 300, cellH: CGFloat = 400
+    for start in stride(from: 0, to: entries.count, by: perSheet) {
+        let page = Array(entries[start..<min(start + perSheet, entries.count)])
+        let rows = (page.count + cols - 1) / cols
+        let width = CGFloat(cols) * cellW, height = CGFloat(rows) * cellH
+        let ctx = CGContext(data: nil, width: Int(width), height: Int(height), bitsPerComponent: 8, bytesPerRow: 0,
+                            space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        ctx.setFillColor(rgb(0xececec)); ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        ctx.interpolationQuality = .none
+        for (i, (label, v, note)) in page.enumerated() {
+            let x0 = CGFloat(i % cols) * cellW, y0 = height - CGFloat(i / cols + 1) * cellH
+            if let v {
+                ctx.draw(render(v, size: 256), in: CGRect(x: x0 + 22, y: y0 + 120, width: 256, height: 256))
+                ctx.draw(render(v, size: 32), in: CGRect(x: x0 + 134, y: y0 + 78, width: 32, height: 32))
+            } else {
+                drawText("not rendered", font(22, weight: .bold), rgb(0xcf3f3f), at: CGPoint(x: x0 + 70, y: y0 + 240), in: ctx)
+            }
+            drawText(String("\(start + i + 1). \(label)".prefix(28)), font(17, weight: .semibold), rgb(0x1d2026), at: CGPoint(x: x0 + 14, y: y0 + 46), in: ctx)
+            drawText(String(note.prefix(34)), font(13, weight: .regular), note.hasPrefix("FAIL") ? rgb(0xcf3f3f) : rgb(0x6b7280),
+                     at: CGPoint(x: x0 + 14, y: y0 + 22), in: ctx)
+        }
+        let url = URL(fileURLWithPath: String(format: "%@-%02d.png", prefix, start / perSheet + 1))
+        writePNG(ctx.makeImage()!, url)
+        print("Wrote \(url.path)")
+    }
+}
+
 // MARK: Output
 
 func writePNG(_ img: CGImage, _ url: URL) {
@@ -1057,6 +1145,29 @@ if let preview = option("--preview") {
     // --family out.png --kanna kanna-icon.png [--only v11,v14]: side by side with Kanna.app's icon.
     makeFamily(URL(fileURLWithPath: option("--kanna") ?? "kanna-icon.png"),
                option("--only")?.split(separator: ",").map(String.init) ?? ["v11", "v12", "v14"], URL(fileURLWithPath: fam))
+} else if let prefix = option("--font-sheet") {
+    // --font-sheet PREFIX --font-list fonts.tsv: v12 in every listed font, ~20 per sheet,
+    // after the built-in v12 and v12b for comparison.
+    var entries: [(String, Variant?, String)] = ["v12", "v12b"].compactMap { n in
+        variants.first { $0.name == n }.map { (n == "v12" ? "v12 (SF Rounded Heavy)" : "v12b (SF Pro Heavy)", $0, "built in") }
+    }
+    for e in readFontList(option("--font-list") ?? "fonts.tsv") {
+        let (v, why) = v12FileVariant(e)
+        entries.append((e.label, v, v == nil ? why : "\(why) | \(e.note)"))
+        if v == nil { print("\(e.label): \(why)") }
+    }
+    makeFontSheets(entries, prefix: prefix)
+} else if let out = option("--font-shortlist") {
+    // --font-shortlist out.png --font-list fonts.tsv --only "Hack,VT323": 512/64/32 on light and dark.
+    let want = (option("--only") ?? "").split(separator: ",").map(String.init)
+    let list = readFontList(option("--font-list") ?? "fonts.tsv")
+    let vs = want.compactMap { w in list.first { $0.label == w }.flatMap { v12FileVariant($0).0 } }
+    makeSheet2(vs, URL(fileURLWithPath: out))
+} else if let file = option("--font-file") {
+    // --font-file PATH [--out DIR]: kmux.icns of v12 in that font (registered for this process only).
+    let (v, why) = v12FileVariant(FontEntry(label: "v12-file", path: file, note: ""))
+    guard let v else { fatalError(why) }
+    makeIcns(v, outDir: option("--out").map { URL(fileURLWithPath: $0) } ?? scriptDir)
 } else if let zoom = option("--zoom") {
     let names = option("--only")?.split(separator: ",").map(String.init) ?? explorations.map(\.name)
     makeZoom(names, URL(fileURLWithPath: zoom))
