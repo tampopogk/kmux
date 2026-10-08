@@ -1,6 +1,6 @@
 # merman (Mermaid parsing and layout, github.com/Latias94/merman) for kmux's
 # native diagram view, behind one small C call. Built with scripts/build-merman.sh.
-# Not in the main workspace: merman needs Rust 1.95.
+# Not in the main workspace: built on its own as a static library.
 [package]
 name = "kmux-merman"
 version = "0.1.0"

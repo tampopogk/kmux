@@ -1,7 +1,7 @@
 [workspace]
 members = ["crates/kmux", "crates/kmux-bench", "crates/kmux-client"]
 resolver = "2"
-# Built on its own (Rust 1.95): scripts/build-merman.sh.
+# Built on its own as a static library: scripts/build-merman.sh.
 exclude = ["crates/kmux-merman"]
 
 [workspace.package]

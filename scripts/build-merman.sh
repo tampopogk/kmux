@@ -10,11 +10,9 @@ out="$repo_root/target/merman"
 xcframework="$out/KmuxMerman.xcframework"
 library="$repo_root/target/kmux-merman/release/libkmux_merman.a"
 
-# merman needs a newer Rust than the rest of kmux.
-if ! rustup run "$KMUX_MERMAN_RUST" rustc --version >/dev/null 2>&1; then
-  rustup toolchain install "$KMUX_MERMAN_RUST" --profile minimal
-fi
-(cd "$crate" && CARGO_TARGET_DIR="$repo_root/target/kmux-merman" cargo "+$KMUX_MERMAN_RUST" build --release --locked)
+# The Rust in rust-toolchain.toml, installed if missing.
+(cd "$repo_root" && rustup toolchain install >/dev/null)
+(cd "$crate" && CARGO_TARGET_DIR="$repo_root/target/kmux-merman" cargo build --release --locked)
 
 # Rebuild the xcframework only when the library changed.
 if [[ -f "$xcframework/Info.plist" && "$xcframework" -nt "$library" ]]; then
