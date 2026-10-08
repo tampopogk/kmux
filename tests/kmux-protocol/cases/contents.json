@@ -20,5 +20,24 @@
       { "send": { "cmd": "navigate", "args": { "pane": "sh", "url": "example.com" } }, "expect": { "ok": false, "error": { "code": "wrong_type" } } },
       { "send": { "cmd": "send", "args": { "pane": "nope", "text": "x" } }, "expect": { "ok": false, "error": { "code": "not_found" } } }
     ]
+  },
+  {
+    "name": "web history is off unless asked for; with it, navigate goes back and forward",
+    "steps": [
+      { "send": { "cmd": "open", "args": { "type": "web", "name": "plain", "url": "a.test" } }, "expect": { "pane": { "history": false } } },
+      { "send": { "cmd": "navigate", "args": { "pane": "plain", "url": "b.test" } } },
+      { "send": { "cmd": "navigate", "args": { "pane": "plain", "back": true } }, "expect": { "ok": false, "error": { "code": "bad_request" } } },
+      { "send": { "cmd": "open", "args": { "type": "term", "history": true } }, "expect": { "ok": false, "error": { "code": "bad_request" } } },
+      { "send": { "cmd": "open", "args": { "type": "web", "name": "site", "url": "a.test", "history": true } }, "expect": { "pane": { "history": true } } },
+      { "send": { "cmd": "navigate", "args": { "pane": "site", "back": true } }, "expect": { "ok": false, "error": { "code": "bad_request" } } },
+      { "send": { "cmd": "navigate", "args": { "pane": "site", "url": "b.test" } } },
+      { "send": { "cmd": "navigate", "args": { "pane": "site", "url": "c.test" } } },
+      { "send": { "cmd": "navigate", "args": { "pane": "site", "back": true } }, "expect": { "pane": { "url": "http://b.test" } } },
+      { "send": { "cmd": "navigate", "args": { "pane": "site", "back": true } }, "expect": { "pane": { "url": "http://a.test" } } },
+      { "send": { "cmd": "navigate", "args": { "pane": "site", "forward": true } }, "expect": { "pane": { "url": "http://b.test" } } },
+      { "send": { "cmd": "navigate", "args": { "pane": "site", "url": "d.test" } } },
+      { "send": { "cmd": "navigate", "args": { "pane": "site", "forward": true } }, "expect": { "ok": false, "error": { "code": "bad_request" } } },
+      { "send": { "cmd": "navigate", "args": { "pane": "site", "back": true } }, "expect": { "pane": { "url": "http://b.test" } } }
+    ]
   }
 ]

@@ -23,7 +23,6 @@ final class WebPaneView: NSView, WKNavigationDelegate, NSTextFieldDelegate {
         webView = FocusReportingWebView(frame: .zero, configuration: configuration)
         super.init(frame: .zero)
         webView.navigationDelegate = self
-        webView.allowsBackForwardNavigationGestures = true
         addSubview(webView)
         notice.alignment = .center
         notice.font = .systemFont(ofSize: 13)

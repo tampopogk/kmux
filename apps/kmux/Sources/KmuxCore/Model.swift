@@ -14,6 +14,8 @@ public final class Pane {
     public var command: String?
     public var cwd: String?
     public var url: String?
+    /// Back/forward history, kept only for web panes opened with `history: true`.
+    public var history: History?
 
     init(id: String, name: String?, type: PaneType) {
         self.id = id
@@ -270,9 +272,17 @@ public final class Model {
             out["cmd"] = pane.command.map(JSON.string) ?? .null
             out["cwd"] = pane.cwd.map(JSON.string) ?? .null
         }
-        if pane.type == .web { out["url"] = pane.url.map(JSON.string) ?? .null }
+        if pane.type == .web {
+            out["url"] = pane.url.map(JSON.string) ?? .null
+            out["history"] = .bool(pane.history != nil)
+        }
         if let code = pane.exitCode { out["exitCode"] = .number(Double(code)) }
         if let error = pane.error { out["error"] = .string(error) }
         return .object(out)
     }
+}
+
+public struct History {
+    public var back: [String] = []
+    public var forward: [String] = []
 }

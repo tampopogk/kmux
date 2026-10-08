@@ -379,6 +379,8 @@ mod tests {
             ("kmux send server npm test", json!({ "pane": "server", "text": "npm test" })),
             ("kmux move logs --to server --side bottom", json!({ "pane": "logs", "to": "server", "side": "bottom" })),
             ("kmux move-tab t2 --index 0", json!({ "tab": "t2", "index": 0 })),
+            ("kmux open web a.test --history", json!({ "type": "web", "url": "a.test", "history": true })),
+            ("kmux navigate site --back", json!({ "pane": "site", "back": true })),
         ];
         for (line, expected) in cases {
             let (_, request) = parse(line).unwrap_or_else(|f| panic!("{line}: {}", f.message));
@@ -395,6 +397,8 @@ mod tests {
             ("kmux open web", "need a URL"),
             ("kmux move logs", "say where"),
             ("kmux zoom a b", "unexpected argument \"b\""),
+            ("kmux open --history", "only for web panes"),
+            ("kmux navigate site --back x", "one of URL"),
             ("kmux lsit", "Did you mean: list"),
             ("kmux rename t1 x", "Did you mean: rename-tab"),
         ] {

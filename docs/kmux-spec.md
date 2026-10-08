@@ -153,7 +153,7 @@ kmux launches in front by default. With `--bg` (on the app or the CLI, or `KMUX_
 | Type | Shows | Behaviour in the model |
 |------|-------|------------------------|
 | `term` | A shell or command, in a Ghostty terminal | Runs `cmd` if given. Ctrl+C interrupts. `exit [code]` moves the pane to **exited** and shows the code. |
-| `web` | A web page | No address bar. **Open URL** (⌘L) shows a floating address field. A `localhost` URL whose server isn't up shows "Waiting for …" and loads once the server responds. |
+| `web` | A web page | No address bar. **Open URL** (⌘L) shows a floating address field. A `localhost` URL whose server isn't up shows "Waiting for …" and loads once the server responds. No back/forward history unless the pane is opened with `history` (`kmux open web URL --history`); then **Back** and **Forward** in the Pane menu and `navigate` with `back` or `forward` move through it. |
 | `ios` | An app in the native iOS Simulator | Shows "Booting \<device\>…", then the app. Clicks are forwarded to the simulator. An unknown device fails and lists the available devices. |
 
 ![Open URL (⌘L) on a web pane](img/kmux/open-url.png)
@@ -189,6 +189,7 @@ The menu bar has **Pane**, **View** and **Window** menus. Right-clicking a pane 
 | New web / iOS pane right or below | — | Pane menu |
 | Next / previous pane | ⌘] / ⌘[ | Pane menu |
 | Open URL (web panes) | ⌘L | Pane menu |
+| Back / forward (web panes opened with history) | — | Pane menu |
 | Zoom / unzoom | ⇧⌘↩ | Pane menu |
 | Move pane to new window | — | Pane menu |
 | Restart | ⌘R | Pane menu |
@@ -261,7 +262,7 @@ Each request is `{ id, cmd, args }`. Each reply is `{ id, ok: true, … }` or `{
 | `cmd` | `args` | Notes |
 |-------|--------|-------|
 | `capabilities` | — | The instance name, pane types, features and the commands this kmux supports. |
-| `open` | `type`, `url` / `cmd` / `cwd` / `app` / `device`, `name?`, `split?` (`right` / `down` / `auto`), `size?`, `tab?`, `window?`, `wait?` | See [3.2](#32-sizes). The reply includes the pane's window and tab. |
+| `open` | `type`, `url` / `cmd` / `cwd` / `app` / `device`, `history?` (web only, default off), `name?`, `split?` (`right` / `down` / `auto`), `size?`, `tab?`, `window?`, `wait?` | See [3.2](#32-sizes). The reply includes the pane's window and tab. |
 | `arrange` | `layout` (tree), `window?` | See [3.3](#33-arrange). |
 | `move` | `pane`, plus one of: `to` + `side` (`left` / `right` / `top` / `bottom` / `swap`); `tab` (ID, or `new` with optional `window`); `window` (ID or `new`) | See [section 6](#6-moving-windows-tabs-and-panes). Moving to a window adds the pane to that window's active tab. |
 | `move-tab` | `tab`, `window?`, `index?` | Reorders a tab or moves it to another window, or to a new one. |
@@ -273,7 +274,7 @@ Each request is `{ id, cmd, args }`. Each reply is `{ id, ok: true, … }` or `{
 | `close` | one of `pane`, `tab`, `window` | Closes it and everything inside it. |
 | `restart` | `pane` | |
 | `send` | `pane`, `text` | `term` panes only. Runs `text` as a typed line. |
-| `navigate` | `pane`, `url` | `web` panes only. |
+| `navigate` | `pane`, plus `url`, `back: true` or `forward: true` | `web` panes only. `back` and `forward` need a pane opened with `history`. |
 
 ### 7.2 Layout trees
 
@@ -326,7 +327,7 @@ $ kmux instances
 |-------|----------|
 | Platform | A native macOS app (AppKit). |
 | Terminal | Ghostty (GhosttyKit), reusing kanna-v3's build pipeline and terminal view. Start from **upstream Ghostty**: kanna-v3's fork existed to stream terminals from a daemon, and kmux has no persisted terminals for now. |
-| iOS pane | The native iOS Simulator. **Deferred:** not part of the first native builds. |
+| iOS pane | The iOS Simulator's screen is **embedded in the pane** with native UI, not a separate Simulator window placed over it. **Deferred:** not part of the first native builds. |
 | Transport | A **persistent connection** over the Unix socket: a client keeps one connection open and sends many requests over it. Messages are **newline-delimited JSON** (one request or reply per line), answered in order. Each instance has its own socket in `~/Library/Application Support/kmux/` (`kmux.sock` for the default instance), or `$KMUX_SOCKET`, readable only by the user. |
 | Shortcuts | Come from the user's **Ghostty config**, as in kanna-v3, with the shortcuts in [section 5](#5-menus-and-shortcuts) as defaults. |
 | Pane commands | A `term` pane's `cmd` is a shell command line, run by the user's login shell. |
@@ -336,6 +337,11 @@ $ kmux instances
 | kmux CLI | Rust, sharing the socket client with kanna (`crates/kmux-client`). Commands, help and parsing come from one table. Checked by having a fresh agent use it cold. |
 | Repos | kmux (app, CLI, model, spec) and kanna are separate repos. kanna depends on kmux's `kmux-client` crate. |
 | Instances | Several at once, one socket each ([3.4](#34-instances)). |
+| Events | **None for now.** Clients that need to notice changes poll `list`. Events would let a client react straight away (a server pane exited, a command sent with `send` finished, a page moved) and can be added later. |
+| Pane identity | No pane names on hover. Panes stay chromeless; `kmux list` shows names. |
+| Persistence | None. Windows and layouts don't survive a restart. |
+| Web navigation | Back/forward history is **off by default** and turned on per pane with `history` (`--history` in the CLI). There are no history shortcuts, because ⌘[ and ⌘] move between panes. |
+| Performance | Measured by the benchmark utility, `kmux-bench` ([8.3](#83-performance)). |
 | Background | kmux launches in front; `--bg` keeps it behind the user's windows, for tests ([3.5](#35-staying-in-the-background)). |
 | Tab titles | Plain names (`Tab 1`, …) that users rename by double-clicking and clients rename with `rename-tab`. Listing pane names didn't scale. |
 | Pane dragging | From a ⋯ handle shown on hover at the top of the pane, as in Ghostty, instead of ⌘-drag. |
@@ -344,14 +350,11 @@ $ kmux instances
 
 ### 8.2 Open
 
-| # | Question | Needs |
-|---|----------|-------|
-| 1 | **iOS pane placement (deferred):** mirror the Simulator's screen into the pane, or keep the real Simulator window positioned over it? | A native prototype, once the Simulator is back in scope. |
-| 2 | **Events:** can clients subscribe to changes (pane exited, URL changed)? | Decision, then extend the model. |
-| 3 | **Pane identity:** without chrome or pane names in tab titles, should a pane's name show on hover? | Your call, then try it in the model. |
-| 4 | **Persistence:** should windows and layouts survive an app restart? | Decision. This ties into the later daemon. |
-| 5 | **Web navigation:** back/forward history and keyboard shortcuts? | Your call. |
-| 6 | **Performance:** targets for pane start time, input latency and memory per pane. kanna-v3 aimed for under 50 ms of typing latency. | A benchmark utility (the rdd "performance reference"). |
+None right now.
+
+### 8.3 Performance
+
+`kmux-bench` measures pane start time, typing latency and memory per pane against targets. Results and targets are added below once the benchmark exists.
 
 ---
 

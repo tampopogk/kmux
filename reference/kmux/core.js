@@ -198,6 +198,8 @@ function createPane(type, a) {
   const p = {
     id: 'p' + (++S.n.pane), name: a.name || null, type, state: 'starting', error: null, gen: 0, waiters: [],
     cmd: a.cmd || null, cwd: a.cwd || '~', url: a.url ? normUrl(a.url) : null,
+    // Web panes keep back/forward history only when opened with history: true.
+    history: type === 'web' && a.history === true ? { back: [], forward: [] } : null,
     app: a.app || null, device: a.device || 'iPhone 16', lines: [], draft: '', busy: false, server: null, exitCode: null,
   };
   S.panes[p.id] = p;
@@ -290,7 +292,7 @@ const isLocal = u => /^(localhost|127\.0\.0\.1)(:\d+)?$/.test(hostOf(u));
 function summary(p) {
   const s = { id: p.id, name: p.name, type: p.type, state: p.state };
   if (p.type === 'term') Object.assign(s, { cmd: p.cmd, cwd: p.cwd });
-  if (p.type === 'web') s.url = p.url;
+  if (p.type === 'web') Object.assign(s, { url: p.url, history: !!p.history });
   if (p.type === 'ios') Object.assign(s, { app: p.app, device: p.device });
   if (p.exitCode != null) s.exitCode = p.exitCode;
   if (p.error) s.error = p.error;
@@ -328,6 +330,7 @@ async function handle(req) {
         const size = args.size == null ? 0.5 : frac(args.size);
         if (!(size > 0 && size < 1)) throw kerr('bad_request', 'size must be a fraction between 0 and 1');
         if (type === 'web' && !args.url) throw kerr('bad_request', 'web panes need a url');
+        if (args.history != null && type !== 'web') throw kerr('bad_request', 'history is only for web panes');
         if (type === 'ios' && !args.app) throw kerr('bad_request', 'ios panes need an app');
         const w = targetWin(args.window);
         const p = createPane(type, args);
@@ -527,8 +530,19 @@ async function handle(req) {
       case 'navigate': {
         const p = need(args.pane);
         if (p.type !== 'web') throw kerr('wrong_type', `${label(p)} is a ${p.type} pane; navigate only works on web panes`);
-        if (!args.url) throw kerr('bad_request', 'missing url');
-        p.url = normUrl(args.url);
+        const step = args.back ? 'back' : args.forward ? 'forward' : null;
+        if (step) {
+          if (!p.history) throw kerr('bad_request', `${label(p)} keeps no history; open it with history: true`);
+          const from = p.history[step], to = p.history[step === 'back' ? 'forward' : 'back'];
+          if (!from.length) throw kerr('bad_request', `nothing to go ${step} to`);
+          to.push(p.url);
+          p.url = from.pop();
+        } else {
+          if (!args.url) throw kerr('bad_request', 'missing url');
+          const url = normUrl(args.url);
+          if (p.history && url !== p.url) { p.history.back.push(p.url); p.history.forward = []; }
+          p.url = url;
+        }
         p.urlDraft = null;
         start(p);
         await settled(p);

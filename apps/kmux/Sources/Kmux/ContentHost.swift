@@ -46,7 +46,7 @@ final class ContentHost: PaneHost {
             let web = WebPaneView(url: pane.url ?? "about:blank")
             web.onFocus = { [weak self] in self?.onFocus?(id) }
             web.onNavigate = { [weak self] url in self?.onNavigate?(id, url) }
-            web.onURLChange = { [weak self] url in self?.core?.model.panes[id]?.url = url }
+            web.onURLChange = { [weak self] url in self?.core?.pageMoved(id, to: url) }
             web.webView.contextMenu = { [weak self] in self?.contextMenu?() }
             content = web
         default:

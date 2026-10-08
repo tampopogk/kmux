@@ -549,6 +549,8 @@ function paneMenu(p) {
     ['Previous pane', () => cyclePane(-1), '⌘['],
     '-',
     p.type === 'web' ? ['Open URL…', () => editUrl(p), '⌘L'] : null,
+    p.history ? ['Back', () => ui({ cmd: 'navigate', args: { pane: p.id, back: true } })] : null,
+    p.history ? ['Forward', () => ui({ cmd: 'navigate', args: { pane: p.id, forward: true } })] : null,
     [zoomed ? 'Unzoom' : 'Zoom', () => ui({ cmd: 'zoom', args: { pane: p.id } }), '⇧⌘↩'],
     ['Move to new window', () => ui({ cmd: 'move', args: { pane: p.id, window: 'new' } })],
     ['Restart', () => ui({ cmd: 'restart', args: { pane: p.id } }), '⌘R'],

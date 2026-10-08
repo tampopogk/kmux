@@ -145,11 +145,39 @@ extension Core {
         return [:]
     }
 
+    /// The pane's page is now `url` (asked for, or a link the page followed).
+    func moved(_ pane: Pane, to url: String) {
+        func same(_ a: String, _ b: String) -> Bool { a == b || a + "/" == b || a == b + "/" }
+        if pane.history != nil, let current = pane.url, !same(current, url) {
+            pane.history?.back.append(current)
+            pane.history?.forward = []
+        }
+        pane.url = url
+    }
+
+    /// A web page followed a link or redirect on its own.
+    public func pageMoved(_ id: String, to url: String) {
+        guard let pane = model.panes[id] else { return }
+        moved(pane, to: url)
+    }
+
     func navigate(_ args: JSON) async throws -> [String: JSON] {
         let pane = try needPane(args["pane"]?.string)
         guard pane.type == .web else { throw KmuxError("wrong_type", "\(pane.label) is a \(pane.type.rawValue) pane; navigate only works on web panes") }
-        guard let url = args["url"]?.string, !url.isEmpty else { throw KmuxError("bad_request", "missing url") }
-        pane.url = Self.normalizeURL(url)
+        if let step = args["back"] == true ? "back" : args["forward"] == true ? "forward" : nil {
+            guard var history = pane.history else { throw KmuxError("bad_request", "\(pane.label) keeps no history; open it with history: true") }
+            guard let url = step == "back" ? history.back.popLast() : history.forward.popLast() else {
+                throw KmuxError("bad_request", "nothing to go \(step) to")
+            }
+            if let current = pane.url {
+                if step == "back" { history.forward.append(current) } else { history.back.append(current) }
+            }
+            pane.history = history
+            pane.url = url
+        } else {
+            guard let url = args["url"]?.string, !url.isEmpty else { throw KmuxError("bad_request", "missing url") }
+            moved(pane, to: Self.normalizeURL(url))
+        }
         host?.stop(pane)
         pane.state = .starting
         pane.error = nil

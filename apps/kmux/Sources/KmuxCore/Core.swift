@@ -128,6 +128,7 @@ public final class Core {
         guard let type = PaneType(rawValue: typeName) else { throw KmuxError("bad_request", "unknown pane type \"\(typeName)\" (term, web or ios)") }
         guard type != .ios else { throw KmuxError("bad_request", "ios panes are not supported yet") }
         if type == .web, args["url"]?.string?.isEmpty ?? true { throw KmuxError("bad_request", "web panes need a url") }
+        if args["history"] != nil, type != .web { throw KmuxError("bad_request", "history is only for web panes") }
         let name = args["name"]?.string
         if let name, model.pane(name) != nil { throw KmuxError("name_taken", "a pane named \"\(name)\" already exists") }
         let split = args["split"]?.string ?? "auto"
@@ -140,6 +141,7 @@ public final class Core {
         pane.command = args["cmd"]?.string
         pane.cwd = args["cwd"]?.string
         pane.url = args["url"]?.string.map(Self.normalizeURL)
+        if type == .web, args["history"] == true { pane.history = History() }
         place(pane.id, in: window, split: split, size: size, newTab: args["tab"]?.bool ?? false)
         window.focused = pane.id
         window.activeTab?.lastFocus = pane.id

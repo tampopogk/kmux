@@ -93,6 +93,20 @@ for _ in $(seq 30); do [[ "$(field text <<<"$(web)")" == *"KMUX WEB OK"* ]] && b
 "$cli" navigate site "localhost:$port/missing" >/dev/null
 [[ "$(field panes.1.url <<<"$("$cli" list --json)")" == "http://localhost:$port/missing" ]] || fail "navigate should update the url"
 
+# Web history, only when asked for: back loads the previous page again.
+echo '<h1>PAGE TWO</h1>' > "$out/site/two.html"
+hw="$(field window <<<"$("$cli" open web "localhost:$port" --history --name hist --window new --json)")"
+"$cli" navigate hist "localhost:$port/two.html" >/dev/null
+"$cli" navigate hist --back >/dev/null
+hist() { raw "{\"id\":1,\"cmd\":\"debug.web\",\"args\":{\"pane\":\"hist\"}}"; }
+for _ in $(seq 20); do [[ "$(field text <<<"$(hist)")" == *"KMUX WEB OK"* ]] && break; sleep 0.25; done
+[[ "$(field text <<<"$(hist)")" == *"KMUX WEB OK"* ]] || fail "back should show the first page again: $(hist)"
+"$cli" navigate hist --forward >/dev/null
+for _ in $(seq 20); do [[ "$(field text <<<"$(hist)")" == *"PAGE TWO"* ]] && break; sleep 0.25; done
+[[ "$(field text <<<"$(hist)")" == *"PAGE TWO"* ]] || fail "forward should show page two: $(hist)"
+"$cli" navigate site --back >/dev/null 2>&1 && fail "a pane without --history should refuse --back"
+"$cli" close --window "$hw" >/dev/null
+
 # 5d. Layout commands move real views: swap, resize, arrange.
 "$cli" move sh --to site >/dev/null
 "$cli" arrange '{"split":"row","children":[{"pane":"site","size":"1/4"},{"pane":"sh"}]}' >/dev/null
@@ -109,12 +123,12 @@ state() { "$cli" list --json; }
 key "cmd+d"
 key "cmd+shift+d"
 layout="$(field windows.0.tabs.0.layout <<<"$(state)")"
-[[ "$layout" == '{"children": [{"pane": "k1", "size": "1/2"}, {"children": [{"pane": "p7", "size": "1/2"}, {"pane": "p8", "size": "1/2"}], "size": "1/2", "split": "column"}], "split": "row"}' ]] \
+[[ "$layout" == '{"children": [{"pane": "k1", "size": "1/2"}, {"children": [{"pane": "p8", "size": "1/2"}, {"pane": "p9", "size": "1/2"}], "size": "1/2", "split": "column"}], "split": "row"}' ]] \
   || fail "cmd+d / cmd+shift+d layout: $layout"
-[[ "$(field windows.0.focused <<<"$(state)")" == p8 ]] || fail "the new pane should take focus"
+[[ "$(field windows.0.focused <<<"$(state)")" == p9 ]] || fail "the new pane should take focus"
 key "cmd+]"; [[ "$(field windows.0.focused <<<"$(state)")" == k1 ]] || fail "cmd+] should wrap to k1"
-key "cmd+["; [[ "$(field windows.0.focused <<<"$(state)")" == p8 ]] || fail "cmd+[ should wrap back to p8"
-key "cmd+shift+return"; [[ "$(field windows.0.zoomed <<<"$(state)")" == p8 ]] || fail "cmd+shift+return should zoom"
+key "cmd+["; [[ "$(field windows.0.focused <<<"$(state)")" == p9 ]] || fail "cmd+[ should wrap back to p9"
+key "cmd+shift+return"; [[ "$(field windows.0.zoomed <<<"$(state)")" == p9 ]] || fail "cmd+shift+return should zoom"
 key "cmd+["; [[ "$(field windows.0.zoomed <<<"$(state)")" == None ]] || fail "moving focus should unzoom"
 sleep 1
 drawn three-panes "*" 3

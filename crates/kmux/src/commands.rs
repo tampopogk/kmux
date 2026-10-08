@@ -29,7 +29,7 @@ pub static COMMANDS: &[Command] = &[
         name: "open",
         group: "Panes",
         summary: "Open a terminal pane (or a web pane) and wait until it is running.",
-        usage: "kmux open [term] [--cmd CMD] [--cwd DIR] [--name NAME] [--split right|down|auto] [--size FRACTION] [--tab] [--window ID|new] [--no-wait]\n       kmux open web URL [same placement options]",
+        usage: "kmux open [term] [--cmd CMD] [--cwd DIR] [--name NAME] [--split right|down|auto] [--size FRACTION] [--tab] [--window ID|new] [--no-wait]\n       kmux open web URL [--history] [same placement options]",
         options: &[
             ("--cmd CMD", "Shell command line to run in your login shell, e.g. \"npm run dev\". Put it in single quotes if it uses $VARS or ;, so your own shell leaves it alone. Default: an interactive shell."),
             ("--cwd DIR", "Working directory."),
@@ -39,6 +39,7 @@ pub static COMMANDS: &[Command] = &[
             ("--tab", "Open in a new tab instead of splitting."),
             ("--window ID|new", "Open in that window, or a new one. Default: the key (front) window."),
             ("--no-wait", "Return as soon as the pane exists instead of waiting until it is running."),
+            ("--history", "Web panes only: keep back/forward history (off by default), for `kmux navigate PANE --back` and the Pane menu's Back and Forward."),
         ],
         notes: "Prints the new pane's ID and name. A pane whose command exits stays on screen as `exited`.",
         examples: &[
@@ -227,15 +228,27 @@ pub static COMMANDS: &[Command] = &[
     Command {
         name: "navigate",
         group: "Panes",
-        summary: "Point a web pane at a new URL.",
-        usage: "kmux navigate PANE URL",
-        options: &[],
-        notes: "",
-        examples: &[("kmux navigate site localhost:5173", "Show localhost:5173 in the site pane.")],
+        summary: "Point a web pane at a new URL, or go back or forward.",
+        usage: "kmux navigate PANE URL\n       kmux navigate PANE --back|--forward",
+        options: &[
+            ("--back", "Go back a page. Only for panes opened with `open web URL --history`."),
+            ("--forward", "Go forward a page (after --back)."),
+        ],
+        notes: "Web panes keep no history unless opened with --history.",
+        examples: &[
+            ("kmux navigate site localhost:5173", "Show localhost:5173 in the site pane."),
+            ("kmux navigate site --back", "Go back to the previous page (the pane was opened with --history)."),
+        ],
         parse: |args| {
             let pane = pane(args, "navigate")?;
-            let url = args.positional().ok_or_else(|| usage("navigate", "missing URL"))?;
-            Ok(json!({ "pane": pane, "url": url }))
+            let (back, forward) = (args.flag("--back"), args.flag("--forward"));
+            match (back, forward, args.positional()) {
+                (true, false, None) => Ok(json!({ "pane": pane, "back": true })),
+                (false, true, None) => Ok(json!({ "pane": pane, "forward": true })),
+                (false, false, Some(url)) => Ok(json!({ "pane": pane, "url": url })),
+                (false, false, None) => Err(usage("navigate", "missing URL (or --back / --forward)")),
+                _ => Err(usage("navigate", "give one of URL, --back or --forward")),
+            }
         },
         show: |_, reply| output::pane_state(reply),
     },
@@ -326,6 +339,7 @@ fn parse_open(args: &mut Args) -> Result<Value, Failure> {
     if args.flag("--no-wait") {
         out.insert("wait".into(), json!(false));
     }
+    let history = args.flag("--history");
     let kind = match args.positional() {
         None => "term".to_string(),
         Some(kind) if ["term", "web", "ios"].contains(&kind.as_str()) => kind,
@@ -336,6 +350,12 @@ fn parse_open(args: &mut Args) -> Result<Value, Failure> {
     if kind == "web" {
         let url = args.positional().ok_or_else(|| usage("open", "web panes need a URL: kmux open web URL"))?;
         out.insert("url".into(), json!(url));
+    }
+    if history {
+        if kind != "web" {
+            return Err(usage("open", "--history is only for web panes: kmux open web URL --history"));
+        }
+        out.insert("history".into(), json!(true));
     }
     out.insert("type".into(), json!(kind));
     Ok(Value::Object(out))

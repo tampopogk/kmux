@@ -182,6 +182,8 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         if item.action == #selector(openURL) { return focusedPane.flatMap { host.web($0) } != nil }
+        if item.action == #selector(goBack) { return !(focusedPane.flatMap { core.model.panes[$0]?.history?.back.isEmpty } ?? true) }
+        if item.action == #selector(goForward) { return !(focusedPane.flatMap { core.model.panes[$0]?.history?.forward.isEmpty } ?? true) }
         return true
     }
 
@@ -209,6 +211,17 @@ final class AppController: NSObject, NSApplicationDelegate {
     @objc func toggleZoom() {
         guard let pane = focusedPane else { return }
         request(["cmd": "zoom", "args": ["pane": .string(pane)]])
+    }
+
+    /// Back and Forward, for web panes opened with history.
+    @objc func goBack() {
+        guard let pane = focusedPane else { return }
+        request(["cmd": "navigate", "args": ["pane": .string(pane), "back": true]])
+    }
+
+    @objc func goForward() {
+        guard let pane = focusedPane else { return }
+        request(["cmd": "navigate", "args": ["pane": .string(pane), "forward": true]])
     }
 
     @objc func movePaneToNewWindow() {
@@ -550,6 +563,8 @@ final class AppController: NSObject, NSApplicationDelegate {
             ("New Web Pane Right", #selector(webRight), nil, nil),
             ("New Web Pane Below", #selector(webDown), nil, nil),
             ("Open URL…", #selector(openURL), nil, .cmd("l")),
+            ("Back", #selector(goBack), nil, nil),
+            ("Forward", #selector(goForward), nil, nil),
             nil,
             ("Next Pane", #selector(nextPane), "goto_split:next", .cmd("]")),
             ("Previous Pane", #selector(previousPane), "goto_split:previous", .cmd("[")),
