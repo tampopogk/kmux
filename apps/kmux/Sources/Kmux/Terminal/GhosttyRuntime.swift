@@ -81,7 +81,7 @@ final class GhosttyRuntime {
 
     /// Starts `command` (or the user's shell) in a new surface drawn by `view`.
     /// With a command, the pane stays on screen after it exits.
-    func attach(_ view: TerminalSurfaceView, command: String?, cwd: String?) -> Bool {
+    func attach(_ view: TerminalSurfaceView, command: String?, cwd: String?, environment: [(String, String)] = []) -> Bool {
         var options = ghostty_surface_config_new()
         options.platform_tag = GHOSTTY_PLATFORM_MACOS
         options.platform = ghostty_platform_u(macos: ghostty_platform_macos_s(nsview: Unmanaged.passUnretained(view).toOpaque()))
@@ -93,11 +93,18 @@ final class GhosttyRuntime {
         // program; going through the user's shell keeps `a; b` and pipes
         // working, and `exec -l` still makes it a login shell.
         let command = command.map { "\(Self.shell) -c \(Self.quote($0))" }
+        let strings = environment.map { (strdup($0.0), strdup($0.1)) }
+        defer { strings.forEach { free($0.0); free($0.1) } }
+        var variables = strings.map { ghostty_env_var_s(key: $0.0, value: $0.1) }
         let surface = withOptionalCString(command) { commandPointer in
             withOptionalCString(directory) { directoryPointer in
-                options.command = commandPointer
-                options.working_directory = directoryPointer
-                return ghostty_surface_new(app, &options)
+                variables.withUnsafeMutableBufferPointer { buffer in
+                    options.command = commandPointer
+                    options.working_directory = directoryPointer
+                    options.env_vars = buffer.baseAddress
+                    options.env_var_count = buffer.count
+                    return ghostty_surface_new(app, &options)
+                }
             }
         }
         guard let surface else { return false }

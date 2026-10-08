@@ -25,6 +25,8 @@ public protocol PaneHost: AnyObject {
 public final class Core {
     public let model = Model()
     public var host: PaneHost?
+    /// Which kmux this is; `capabilities` reports its name.
+    public var instance = Instance(name: Instance.defaultName)
     /// Called after every change so the UI can redraw.
     public var onChange: () -> Void = {}
     /// Whether a pane is wider than it is tall, for `split: auto`.
@@ -79,7 +81,7 @@ public final class Core {
     private func run(_ cmd: String, _ args: JSON) async throws -> [String: JSON] {
         switch cmd {
         case "capabilities":
-            return ["mux": "kmux", "paneTypes": ["term", "web"], "commands": .array(Self.commands.sorted().map(JSON.string)), "features": ["windows", "tabs", "fractionalSizing", "namedPanes", "zoom", "lifecycle"]]
+            return ["mux": "kmux", "instance": .string(instance.name), "paneTypes": ["term", "web"], "commands": .array(Self.commands.sorted().map(JSON.string)), "features": ["windows", "tabs", "fractionalSizing", "namedPanes", "zoom", "lifecycle"]]
         case "open": return try await open(args)
         case "list": return list()
         case "close": return try close(args)

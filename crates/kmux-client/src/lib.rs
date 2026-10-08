@@ -5,7 +5,7 @@ mod args;
 mod client;
 
 pub use args::Args;
-pub use client::{socket_path, Error, Kmux};
+pub use client::{instance_socket, socket_dir, socket_path, valid_instance, Error, Kmux, Target, DEFAULT_INSTANCE};
 
 /// Exit codes, shared by the kmux and kanna CLIs.
 pub mod exit {

@@ -23,32 +23,96 @@ pub enum Error {
     Mux { code: String, message: String },
 }
 
-pub fn socket_path() -> PathBuf {
-    if let Some(path) = std::env::var_os("KMUX_SOCKET").filter(|p| !p.is_empty()) {
-        return PathBuf::from(path);
-    }
+/// Which kmux to talk to: an instance name and its socket. The default
+/// instance listens on `kmux.sock`; one named `work` on `kmux-work.sock`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Target {
+    pub instance: String,
+    pub socket: PathBuf,
+}
+
+pub const DEFAULT_INSTANCE: &str = "default";
+
+/// `~/Library/Application Support/kmux`, where the sockets live.
+pub fn socket_dir() -> PathBuf {
     let home = std::env::var_os("HOME").unwrap_or_default();
-    PathBuf::from(home).join("Library/Application Support/kmux/kmux.sock")
+    PathBuf::from(home).join("Library/Application Support/kmux")
+}
+
+pub fn instance_socket(name: &str) -> PathBuf {
+    socket_dir().join(if name == DEFAULT_INSTANCE { "kmux.sock".to_string() } else { format!("kmux-{name}.sock") })
+}
+
+/// Instance names: letters, digits, `-` and `_`, up to 32.
+pub fn valid_instance(name: &str) -> bool {
+    !name.is_empty() && name.len() <= 32 && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+impl Target {
+    /// `$KMUX_SOCKET` if set (kmux sets it in its terminals), else the
+    /// socket of `$KMUX_INSTANCE`, else the default instance.
+    pub fn from_env() -> Target {
+        let instance = std::env::var("KMUX_INSTANCE").ok().filter(|n| !n.is_empty()).unwrap_or_else(|| DEFAULT_INSTANCE.into());
+        let socket = std::env::var_os("KMUX_SOCKET").filter(|p| !p.is_empty()).map(PathBuf::from);
+        Target { socket: socket.unwrap_or_else(|| instance_socket(&instance)), instance }
+    }
+
+    /// An instance chosen by name (`--instance`), whatever the environment says.
+    pub fn named(name: &str) -> Target {
+        Target { instance: name.into(), socket: instance_socket(name) }
+    }
+
+    /// The running instances, default first, from the sockets that answer.
+    pub fn running() -> Vec<Target> {
+        let mut names: Vec<String> = std::fs::read_dir(socket_dir())
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|entry| {
+                let file = entry.file_name().into_string().ok()?;
+                if file == "kmux.sock" {
+                    return Some(DEFAULT_INSTANCE.to_string());
+                }
+                Some(file.strip_prefix("kmux-")?.strip_suffix(".sock")?.to_string())
+            })
+            .collect();
+        names.sort_by_key(|n| (n != DEFAULT_INSTANCE, n.clone()));
+        names.into_iter().map(|n| Target::named(&n)).filter(|t| UnixStream::connect(&t.socket).is_ok()).collect()
+    }
+}
+
+/// The socket the environment points at (see `Target::from_env`).
+pub fn socket_path() -> PathBuf {
+    Target::from_env().socket
 }
 
 impl Kmux {
     /// Connects to kmux, starting it first if it isn't running.
     pub fn connect() -> Result<Kmux, Error> {
-        let path = socket_path();
-        if let Ok(stream) = UnixStream::connect(&path) {
-            return Kmux::from_stream(stream);
+        Kmux::connect_to(&Target::from_env())
+    }
+
+    /// Connects to `target`, starting that instance first if it isn't running.
+    pub fn connect_to(target: &Target) -> Result<Kmux, Error> {
+        if let Some(mux) = Kmux::try_connect(target) {
+            return Ok(mux);
         }
-        launch()?;
+        launch(target)?;
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
-            match UnixStream::connect(&path) {
+            match UnixStream::connect(&target.socket) {
                 Ok(stream) => return Kmux::from_stream(stream),
                 Err(err) if Instant::now() >= deadline => {
-                    return Err(Error::Unreachable(format!("kmux did not start ({}: {err})", path.display())))
+                    return Err(Error::Unreachable(format!("kmux did not start ({}: {err})", target.socket.display())))
                 }
                 Err(_) => sleep(Duration::from_millis(100)),
             }
         }
+    }
+
+    /// Connects to `target` only if it is already running.
+    pub fn try_connect(target: &Target) -> Option<Kmux> {
+        UnixStream::connect(&target.socket).ok().and_then(|stream| Kmux::from_stream(stream).ok())
     }
 
     fn from_stream(stream: UnixStream) -> Result<Kmux, Error> {
@@ -85,14 +149,19 @@ impl Kmux {
     }
 }
 
-/// Starts kmux in the background: `$KMUX_APP` if set, else the app by bundle ID.
-fn launch() -> Result<(), Error> {
+/// Starts the instance in the background, as a new copy of the app (other
+/// instances may be running): `$KMUX_APP` if set, else the app by bundle ID.
+fn launch(target: &Target) -> Result<(), Error> {
     let mut open = Command::new("/usr/bin/open");
-    open.arg("-g");
+    open.args(["-n", "-g"]);
+    if target.socket != instance_socket(&target.instance) {
+        open.arg("--env").arg(format!("KMUX_SOCKET={}", target.socket.display()));
+    }
     match std::env::var_os("KMUX_APP") {
         Some(app) => open.arg("-a").arg(app),
         None => open.arg("-b").arg("dev.kanna.kmux"),
     };
+    open.args(["--args", "--instance", &target.instance]);
     let status = open.status().map_err(|e| Error::Unreachable(format!("could not start kmux: {e}")))?;
     if status.success() {
         Ok(())

@@ -11,13 +11,7 @@ public final class SocketServer: @unchecked Sendable {
     private let handler: Handler
     private var listener: Int32 = -1
 
-    public static var defaultPath: String {
-        if let path = ProcessInfo.processInfo.environment["KMUX_SOCKET"], !path.isEmpty { return path }
-        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return support.appendingPathComponent("kmux/kmux.sock").path
-    }
-
-    public init(path: String = SocketServer.defaultPath, handler: @escaping Handler) {
+    public init(path: String, handler: @escaping Handler) {
         self.path = path
         self.handler = handler
     }
@@ -123,7 +117,7 @@ public final class SocketServer: @unchecked Sendable {
         return address
     }
 
-    static func isListening(_ path: String) -> Bool {
+    public static func isListening(_ path: String) -> Bool {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { return false }
         defer { close(fd) }

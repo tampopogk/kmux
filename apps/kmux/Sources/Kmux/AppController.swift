@@ -7,8 +7,10 @@ import KmuxCore
 @MainActor
 final class AppController: NSObject, NSApplicationDelegate {
     private let core = Core()
+    private var instance = Instance(name: Instance.defaultName)
     private var host: ContentHost!
     private var server: SocketServer?
+    private var signalSources: [DispatchSourceSignal] = []
     private var controllers: [String: WindowController] = [:]
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -17,7 +19,16 @@ final class AppController: NSObject, NSApplicationDelegate {
         } catch {
             fatal("kmux: \(error.localizedDescription)")
         }
+        do {
+            instance = try Instance.current()
+        } catch let error as KmuxError {
+            fatal("kmux: \(error.message)")
+        } catch {
+            fatal("kmux: \(error)")
+        }
+        core.instance = instance
         host.core = core
+        host.instance = instance
         host.onFocus = { [weak self] id in self?.focused(id) }
         host.onNavigate = { [weak self] id, url in self?.request(["cmd": "navigate", "args": ["pane": .string(id), "url": .string(url)]]) }
         host.onCloseRequest = { [weak self] id in self?.request(["cmd": "close", "args": ["pane": .string(id)]]) }
@@ -51,7 +62,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             return ghosttyAction(id, action)
         }
 
-        let server = SocketServer { [weak self] request in await self?.core.handle(request) ?? nil }
+        let server = SocketServer(path: instance.socketPath) { [weak self] request in await self?.core.handle(request) ?? nil }
         do {
             try server.start()
             self.server = server
@@ -59,6 +70,14 @@ final class AppController: NSObject, NSApplicationDelegate {
             fatal("kmux: \(error.message)")
         } catch {
             fatal("kmux: \(error)")
+        }
+        // Quit cleanly (removing the socket) when killed, not only on ⌘Q.
+        for signal in [SIGTERM, SIGINT, SIGHUP] {
+            Darwin.signal(signal, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: signal, queue: .main)
+            source.setEventHandler { NSApp.terminate(nil) }
+            source.resume()
+            signalSources.append(source)
         }
         installMenu()
         NSApp.activate()
@@ -93,7 +112,7 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private func makeController(_ id: String) -> WindowController {
         let previous = controllers.values.map(\.window).max { $0.orderedIndex > $1.orderedIndex }
-        let controller = WindowController(id: id, cascadeFrom: previous)
+        let controller = WindowController(id: id, instance: instance, cascadeFrom: previous)
         controller.relayout = { [weak self, weak controller] in
             guard let self, let controller else { return }
             controller.render(core.model, host)
@@ -207,6 +226,16 @@ final class AppController: NSObject, NSApplicationDelegate {
         request(["cmd": "focus", "args": ["tab": .string(tab)]])
     }
 
+    /// Starts another kmux, with its own windows and socket, named 2, 3, ….
+    @objc func newInstance() {
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.createsNewApplicationInstance = true
+        configuration.arguments = ["--instance", Instance.unusedName()]
+        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration) { _, error in
+            if let error { NSLog("kmux: could not start a new instance: \(error)") }
+        }
+    }
+
     @objc func newWindow() { request(["cmd": "open", "args": ["type": "term", "window": "new"]]) }
 
     @objc func closeWindow() {
@@ -279,7 +308,9 @@ final class AppController: NSObject, NSApplicationDelegate {
             main.addItem(item)
             return submenu
         }
-        let app = menu("kmux", [])
+        let app = menu("kmux", [("New Instance", #selector(newInstance), nil, nil)])
+        if !instance.isDefault { app.insertItem(withTitle: "Instance: \(instance.name)", action: nil, keyEquivalent: "", at: 0) }
+        app.addItem(.separator())
         app.addItem(withTitle: "Quit kmux", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         _ = menu("Pane", [
             ("Split Right", #selector(splitRight), "new_split:right", .cmd("d")),

@@ -16,8 +16,12 @@ final class WindowController: NSObject, NSWindowDelegate {
     var onCloseRequest: (() -> Void)?
     var onBecomeKey: (() -> Void)?
 
-    init(id: String, cascadeFrom previous: NSWindow?) {
+    /// Named instances show their name in the title, to tell them apart.
+    let instance: Instance
+
+    init(id: String, instance: Instance, cascadeFrom previous: NSWindow?) {
         self.id = id
+        self.instance = instance
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 960, height: 600), styleMask: [.titled, .closable, .miniaturizable, .resizable],
                           backing: .buffered, defer: false)
         super.init()
@@ -42,7 +46,7 @@ final class WindowController: NSObject, NSWindowDelegate {
 
     func render(_ model: Model, _ host: ContentHost) {
         guard let state = model.window(id), let tab = state.activeTab else { return }
-        window.title = "\(tab.title) — \(id)"
+        window.title = "\(tab.title) — \(id)" + (instance.isDefault ? "" : " · \(instance.name)")
         tabBar.show(model, state)
         let shown = Set(Model.paneIDs(state.zoomed.map { Node.pane($0) } ?? tab.root))
         for case let view as PaneView in stage.subviews where !shown.contains(view.id) { view.removeFromSuperview() }

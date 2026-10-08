@@ -135,4 +135,22 @@ key "cmd+w"; [[ "$(field windows.0.tabs <<<"$(state)" | python3 -c 'import json,
 key "cmd+shift+w"
 [[ "$(field windows <<<"$(state)" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')" == 1 ]] || fail "cmd+shift+w should close the window"
 
+# 7. Instances: a second kmux beside this one, with its own socket and
+# windows. kmux run inside one of its panes controls that instance.
+other="e2e$$"
+other_socket="$HOME/Library/Application Support/kmux/kmux-$other.sock"
+env -u KMUX_SOCKET "$repo_root/target/kmux.app/Contents/MacOS/kmux" --instance "$other" >"$out/kmux-$other.log" 2>&1 &
+other_pid=$!
+trap 'kill $kmux_pid $server_pid $other_pid 2>/dev/null || true; rm -f "$KMUX_SOCKET"' EXIT
+for _ in $(seq 50); do [[ -S "$other_socket" ]] && break; sleep 0.1; done
+[[ -S "$other_socket" ]] || fail "instance $other did not open $other_socket"
+[[ "$(field instance <<<"$("$cli" --instance "$other" capabilities --json)")" == "$other" ]] || fail "capabilities should name the instance"
+[[ "$(env -u KMUX_SOCKET "$cli" instances)" == *" $other "* ]] || fail "kmux instances should list $other: $(env -u KMUX_SOCKET "$cli" instances)"
+"$cli" --instance "$other" open --name parent --cmd "$cli open --name child --split down --no-wait; exec sleep 600" >/dev/null
+for _ in $(seq 50); do [[ "$("$cli" --instance "$other" list)" == *child* ]] && break; sleep 0.1; done
+[[ "$("$cli" --instance "$other" list)" == *child* ]] || fail "kmux inside a pane should reach its own instance"
+[[ "$("$cli" list)" != *child* ]] || fail "the child pane went to the wrong instance"
+kill "$other_pid"; wait "$other_pid" 2>/dev/null || true
+[[ ! -e "$other_socket" ]] || fail "instance $other should remove its socket when it quits"
+
 echo "e2e OK (snapshot: $out/two-panes.png)"

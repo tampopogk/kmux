@@ -6,7 +6,7 @@ mod commands;
 mod output;
 
 use commands::{Command, COMMANDS, GROUPS};
-use kmux_client::{exit, fail, socket_path, Args, Failure, Kmux};
+use kmux_client::{exit, fail, valid_instance, Args, Failure, Kmux, Target};
 use serde_json::{json, Value};
 use std::process::ExitCode;
 
@@ -24,35 +24,51 @@ fn run(args: Vec<String>) -> Result<(), Failure> {
     let mut args = Args::new(args);
     let json_output = args.flag("--json");
     let wants_help = args.flag("--help") || args.flag("-h");
+    let target = match args.option("--instance")? {
+        Some(name) if !valid_instance(&name) => {
+            return Err(fail(exit::USAGE, format!("bad instance name \"{name}\": use letters, digits, - and _ (up to 32)")))
+        }
+        Some(name) => Target::named(&name),
+        None => Target::from_env(),
+    };
     let Some(name) = args.positional() else {
         if args.flag("--version") {
             println!("kmux {}", env!("CARGO_PKG_VERSION"));
             return Ok(());
         }
         if let Some(extra) = args.first() {
-            return Err(fail(exit::USAGE, format!("unknown option \"{extra}\"\n\n{}", overview())));
+            return Err(fail(exit::USAGE, format!("unknown option \"{extra}\"\n\n{}", overview(&target))));
         }
-        println!("{}", overview());
+        println!("{}", overview(&target));
         return Ok(());
     };
 
     match name.as_str() {
         "help" => {
             match args.positional() {
-                None => println!("{}", overview()),
-                Some(topic) => println!("{}", help(lookup(&topic)?)),
+                None => println!("{}", overview(&target)),
+                Some(topic) if topic == "instances" => println!("{INSTANCES_HELP}"),
+                Some(topic) => println!("{}", help(lookup(&topic)?, &target)),
             }
             return Ok(());
         }
         "commands" => {
+            let supported = supported(&target);
             if json_output {
-                println!("{}", serde_json::to_string_pretty(&describe()).unwrap());
+                println!("{}", serde_json::to_string_pretty(&describe(supported.as_deref())).unwrap());
             } else {
                 for command in COMMANDS {
-                    println!("{:<13} {}", command.name, command.summary);
+                    println!("{:<13} {}{}", command.name, command.summary, mark(command, supported.as_deref()));
                 }
             }
             return Ok(());
+        }
+        "instances" => {
+            if wants_help {
+                println!("{INSTANCES_HELP}");
+                return Ok(());
+            }
+            return instances(&target, json_output);
         }
         "raw" => {
             if wants_help {
@@ -62,7 +78,7 @@ fn run(args: Vec<String>) -> Result<(), Failure> {
             let text = args.positional().ok_or_else(|| fail(exit::USAGE, "raw: missing REQUEST, e.g. kmux raw '{\"cmd\":\"list\"}'"))?;
             let request: Value = serde_json::from_str(&text).map_err(|e| fail(exit::USAGE, format!("raw: REQUEST is not valid JSON: {e}")))?;
             let cmd = request["cmd"].as_str().ok_or_else(|| fail(exit::USAGE, "raw: REQUEST needs a \"cmd\""))?;
-            let reply = Kmux::connect()?.call(cmd, request.get("args").cloned().unwrap_or(json!({})))?;
+            let reply = Kmux::connect_to(&target)?.call(cmd, request.get("args").cloned().unwrap_or(json!({})))?;
             println!("{reply}");
             return Ok(());
         }
@@ -71,14 +87,14 @@ fn run(args: Vec<String>) -> Result<(), Failure> {
 
     let command = lookup(&name)?;
     if wants_help {
-        println!("{}", help(command));
+        println!("{}", help(command, &target));
         return Ok(());
     }
     let request = (command.parse)(&mut args)?;
     if let Some(extra) = args.first() {
         return Err(commands::usage(command.name, &format!("unexpected argument \"{extra}\"")));
     }
-    let mut mux = Kmux::connect()?;
+    let mut mux = Kmux::connect_to(&target)?;
     let reply = match mux.call(command.name, request.clone()) {
         Ok(reply) => reply,
         Err(error) => return Err(explain(command, Failure::from(error), &mut mux)),
@@ -116,23 +132,99 @@ fn explain(command: &Command, mut failure: Failure, mux: &mut Kmux) -> Failure {
     failure
 }
 
-fn overview() -> String {
+/// The commands the running instance supports, if it is running (help never
+/// starts kmux).
+fn supported(target: &Target) -> Option<Vec<String>> {
+    let reply = Kmux::try_connect(target)?.call("capabilities", json!({})).ok()?;
+    Some(reply["commands"].as_array()?.iter().filter_map(|c| c.as_str().map(String::from)).collect())
+}
+
+const UNSUPPORTED: &str = "  [not in the running kmux]";
+
+fn mark(command: &Command, supported: Option<&[String]>) -> &'static str {
+    match supported {
+        Some(names) if !names.iter().any(|n| n == command.name) => UNSUPPORTED,
+        _ => "",
+    }
+}
+
+const INSTANCES_HELP: &str = "kmux instances — List the running kmux instances.\n\
+\n\
+usage: kmux instances [--json]\n\
+\n\
+Each instance is a separate kmux app with its own windows and socket. The default\n\
+instance listens on kmux.sock; one named work listens on kmux-work.sock beside it.\n\
+\n\
+Commands go to:\n  \
+  1. the instance named by --instance NAME, if given;\n  \
+  2. else $KMUX_SOCKET (kmux sets it, with $KMUX_INSTANCE and $KMUX_PANE, in its\n     \
+     terminals, so kmux run inside a pane controls that pane's kmux);\n  \
+  3. else the instance named by $KMUX_INSTANCE;\n  \
+  4. else the default instance.\n\
+Commands start the instance if it isn't running. In the app, kmux → New Instance\n\
+starts one named 2, 3, ….\n\
+\n\
+examples:\n  \
+  kmux instances\n      \
+      Which instances are running, and which one commands go to.\n  \
+  kmux --instance work open --name server --cmd \"npm run dev\"\n      \
+      Start (or use) the instance named work, and open a pane in it.\n  \
+  KMUX_INSTANCE=work kmux list\n      \
+      The same choice, for every command in a script.";
+
+fn instances(target: &Target, json_output: bool) -> Result<(), Failure> {
+    let running: Vec<(Target, Value)> = Target::running()
+        .into_iter()
+        .map(|t| {
+            let list = Kmux::try_connect(&t).and_then(|mut m| m.call("list", json!({})).ok()).unwrap_or(json!({}));
+            (t, list)
+        })
+        .collect();
+    let count = |list: &Value, key: &str| list[key].as_array().map_or(0, Vec::len);
+    if json_output {
+        let rows: Vec<Value> = running
+            .iter()
+            .map(|(t, list)| json!({
+                "name": t.instance, "socket": t.socket, "current": t.socket == target.socket,
+                "windows": count(list, "windows"), "panes": count(list, "panes"),
+            }))
+            .collect();
+        println!("{}", json!({ "instances": rows, "current": { "name": target.instance, "socket": target.socket } }));
+        return Ok(());
+    }
+    if running.is_empty() {
+        println!("No kmux instances are running. Any command starts one, e.g. kmux open (default) or kmux --instance work open.");
+        return Ok(());
+    }
+    let plural = |n: usize, word: &str| format!("{n} {word}{}", if n == 1 { "" } else { "s" });
+    let width = running.iter().map(|(t, _)| t.instance.len()).max().unwrap_or(0);
+    for (t, list) in &running {
+        let star = if t.socket == target.socket { "*" } else { " " };
+        println!("{star} {:<width$}  {}, {}", t.instance, plural(count(list, "windows"), "window"), plural(count(list, "panes"), "pane"));
+    }
+    println!("\n* where kmux commands go now ({}). Choose with --instance NAME or KMUX_INSTANCE.", target.socket.display());
+    Ok(())
+}
+
+fn overview(target: &Target) -> String {
+    let supported = supported(target);
     let mut out = String::from(
         "kmux — control the kmux terminal multiplexer (windows → tabs → split panes).\n\
          \n\
-         usage: kmux COMMAND [ARGS] [--json]\n",
+         usage: kmux [--instance NAME] COMMAND [ARGS] [--json]\n",
     );
     for group in GROUPS {
         out += &format!("\n{group}:\n");
         for command in COMMANDS.iter().filter(|c| c.group == *group) {
-            out += &format!("  {:<13} {}\n", command.name, command.summary);
+            out += &format!("  {:<13} {}{}\n", command.name, command.summary, mark(command, supported.as_deref()));
         }
     }
     out += &format!(
-        "\nMore:\n  {:<13} {}\n  {:<13} {}\n  {:<13} {}\n",
+        "\nMore:\n  {:<13} {}\n  {:<13} {}\n  {:<13} {}\n  {:<13} {}\n",
         "help COMMAND", "Details, options and examples for one command (or: kmux COMMAND --help).",
         "commands", "All commands with summaries; `kmux commands --json` describes them for scripts.",
         "raw REQUEST", "Send a control-protocol request as JSON, e.g. kmux raw '{\"cmd\":\"list\"}'.",
+        "instances", "List the running kmux instances (separate apps, each with its own windows).",
     );
     out += &format!(
         "\nReferring to things:\n  \
@@ -146,17 +238,27 @@ fn overview() -> String {
          kmux list\n  \
          kmux open --window new --name scratch      (a new window)\n\
          \n\
-         Not every kmux build has every command yet: `kmux capabilities` lists what the running one supports.\n\
+         {}\n\
          --json prints the reply from kmux as JSON. kmux must be running; the CLI starts it if it isn't.\n\
-         Socket: {} (set KMUX_SOCKET to use another).\n\
+         Instance: {} at {} (--instance NAME for another; kmux help instances).\n\
          Exit codes: 0 ok, 1 failed, 2 bad usage, 3 kmux not reachable, 4 not found, 5 not supported by the running kmux.",
-        socket_path().display()
+        match &supported {
+            None => "kmux isn't running, so help can't check which commands it supports.".to_string(),
+            Some(_) if COMMANDS.iter().any(|c| !mark(c, supported.as_deref()).is_empty()) =>
+                format!("Commands marked {} aren't in the running kmux yet.", UNSUPPORTED.trim()),
+            Some(_) => "The running kmux supports every command.".to_string(),
+        },
+        target.instance,
+        target.socket.display()
     );
     out
 }
 
-fn help(command: &Command) -> String {
+fn help(command: &Command, target: &Target) -> String {
     let mut out = format!("kmux {} — {}\n\nusage: {}\n", command.name, command.summary, command.usage);
+    if !mark(command, supported(target).as_deref()).is_empty() {
+        out += &format!("\nThe running kmux ({}) doesn't support {} yet.\n", target.instance, command.name);
+    }
     let options: Vec<(&str, &str)> = command.options.iter().copied().chain([("--json", "Print the reply as JSON.")]).collect();
     out += "\noptions:\n";
     let width = options.iter().map(|(flag, _)| flag.len()).max().unwrap_or(0);
@@ -173,9 +275,14 @@ fn help(command: &Command) -> String {
     out.trim_end().to_string()
 }
 
-fn describe() -> Value {
+fn describe(supported: Option<&[String]>) -> Value {
     json!({
-        "usage": "kmux COMMAND [ARGS] [--json]",
+        "usage": "kmux [--instance NAME] COMMAND [ARGS] [--json]",
+        "globalOptions": [
+            { "flag": "--instance NAME", "description": "Talk to the kmux instance NAME (default: $KMUX_SOCKET, else $KMUX_INSTANCE, else default). See kmux help instances." },
+            { "flag": "--json", "description": "Print the reply as JSON." }
+        ],
+        "running": supported.is_some(),
         "refs": {
             "PANE": "a pane name (open --name) or ID like p1",
             "TAB": "a tab ID like t1",
@@ -187,6 +294,7 @@ fn describe() -> Value {
             "name": c.name,
             "group": c.group,
             "summary": c.summary,
+            "supported": supported.map(|names| names.iter().any(|n| n == c.name)),
             "usage": c.usage,
             "options": c.options.iter().map(|(flag, text)| json!({ "flag": flag, "description": text })).collect::<Vec<_>>(),
             "notes": c.notes,
