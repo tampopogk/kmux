@@ -16,12 +16,15 @@ app="$repo_root/target/kmux.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$product_dir/kmux" "$app/Contents/MacOS/kmux"
+# Icon source: apps/kmux/Icon/make-icon.swift (regenerate kmux.icns with it).
+cp "$repo_root/apps/kmux/Icon/kmux.icns" "$app/Contents/Resources/kmux.icns"
 
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>CFBundleExecutable</key><string>kmux</string>
+<key>CFBundleIconFile</key><string>kmux</string>
 <key>CFBundleIdentifier</key><string>dev.kanna.kmux</string>
 <key>CFBundleName</key><string>kmux</string>
 <key>CFBundlePackageType</key><string>APPL</string>
