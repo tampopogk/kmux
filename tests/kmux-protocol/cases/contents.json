@@ -39,5 +39,17 @@
       { "send": { "cmd": "navigate", "args": { "pane": "site", "forward": true } }, "expect": { "ok": false, "error": { "code": "bad_request" } } },
       { "send": { "cmd": "navigate", "args": { "pane": "site", "back": true } }, "expect": { "pane": { "url": "http://b.test" } } }
     ]
+  },
+  {
+    "name": "markdown panes show a file; links to other files open in the same pane",
+    "steps": [
+      { "send": { "cmd": "open", "args": { "type": "md" } }, "expect": { "ok": false, "error": { "code": "bad_request" } } },
+      { "send": { "cmd": "open", "args": { "type": "term", "path": "docs/spec.md" } }, "expect": { "ok": false, "error": { "code": "bad_request" } } },
+      { "send": { "cmd": "open", "args": { "type": "md", "name": "doc", "path": "docs/spec.md" } }, "expect": { "pane": { "type": "md", "path": "docs/spec.md", "state": "running" } } },
+      { "send": { "cmd": "navigate", "args": { "pane": "doc", "path": "../README.md" } }, "expect": { "pane": { "path": "README.md", "state": "running" } } },
+      { "send": { "cmd": "navigate", "args": { "pane": "doc", "path": "docs/spec.md" } }, "expect": { "pane": { "path": "docs/spec.md" } } },
+      { "send": { "cmd": "navigate", "args": { "pane": "doc", "url": "example.com" } }, "expect": { "ok": false, "error": { "code": "bad_request" } } },
+      { "send": { "cmd": "send", "args": { "pane": "doc", "text": "x" } }, "expect": { "ok": false, "error": { "code": "wrong_type" } } }
+    ]
   }
 ]

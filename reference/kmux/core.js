@@ -19,6 +19,17 @@ const hooks = {
 // Empty containers close: a tab without panes, then a window without tabs.
 // ---------------------------------------------------------------------------
 const DEVICES = ['iPhone 16', 'iPhone 16 Pro', 'iPhone SE (3rd generation)', 'iPad Air (M2)'];
+// Stand-ins for files on disk, for markdown panes. Writing to one (the page's
+// "edit file" control) is what a live reload looks like.
+const FILES = {
+  'docs/spec.md': [
+    '# Checkout — Spec', '', 'The checkout flow takes a **cart** to a paid **order**.', '',
+    '## States', '', '```mermaid', 'stateDiagram-v2', '    [*] --> cart', '    cart --> paying : pay', '    paying --> paid', '    paying --> cart : declined', '    paid --> [*]', '```', '',
+    '## Open questions', '', '- Do we keep carts for guests?', '- Which wallets come first?', '',
+    '| Step | Owner |', '|------|-------|', '| Cart | Web |', '| Pay | Payments |',
+  ].join('\n'),
+  'README.md': ['# MyApp', '', 'Run `npm run dev`, then open [localhost:3000](http://localhost:3000).', '', 'See [the spec](docs/spec.md).'].join('\n'),
+};
 let S;
 
 function freshState() {
@@ -200,7 +211,7 @@ function createPane(type, a) {
     cmd: a.cmd || null, cwd: a.cwd || '~', url: a.url ? normUrl(a.url) : null,
     // Web panes keep back/forward history only when opened with history: true.
     history: type === 'web' && a.history === true ? { back: [], forward: [] } : null,
-    app: a.app || null, device: a.device || 'iPhone 16', lines: [], draft: '', busy: false, server: null, exitCode: null,
+    app: a.app || null, device: a.device || 'iPhone 16', path: a.path || null, lines: [], draft: '', busy: false, server: null, exitCode: null,
   };
   S.panes[p.id] = p;
   return p;
@@ -223,6 +234,9 @@ function start(p) {
     later(p, 150, () => { setState(p, 'running'); if (p.cmd) runTerm(p, p.cmd); });
   } else if (p.type === 'web') {
     later(p, 400, () => setState(p, 'running'));
+  } else if (p.type === 'md') {
+    if (!(p.path in FILES)) later(p, 100, () => setState(p, 'failed', { error: `No such file: ${p.path}` }));
+    else later(p, 100, () => setState(p, 'running'));
   } else if (p.type === 'ios') {
     if (!DEVICES.includes(p.device)) {
       later(p, 600, () => setState(p, 'failed', { error: `Unknown device "${p.device}".\nAvailable: ${DEVICES.join(', ')}` }));
@@ -285,6 +299,15 @@ function interrupt(p) {
 }
 
 // --- web helpers -----------------------------------------------------------
+// A link's target relative to the file it is in: docs/a.md + ../b.md → b.md.
+function resolvePath(from, rel) {
+  if (rel.startsWith('/')) return rel;
+  const parts = from.split('/').slice(0, -1);
+  for (const part of rel.split('/')) {
+    if (part === '..') parts.pop(); else if (part !== '.' && part !== '') parts.push(part);
+  }
+  return parts.join('/');
+}
 function normUrl(u) { return /^[a-z]+:\/\//i.test(u) ? u : 'http://' + u; }
 function hostOf(u) { try { return new URL(u).host; } catch { return u; } }
 const isLocal = u => /^(localhost|127\.0\.0\.1)(:\d+)?$/.test(hostOf(u));
@@ -294,6 +317,7 @@ function summary(p) {
   if (p.type === 'term') Object.assign(s, { cmd: p.cmd, cwd: p.cwd });
   if (p.type === 'web') Object.assign(s, { url: p.url, history: !!p.history });
   if (p.type === 'ios') Object.assign(s, { app: p.app, device: p.device });
+  if (p.type === 'md') s.path = p.path;
   if (p.exitCode != null) s.exitCode = p.exitCode;
   if (p.error) s.error = p.error;
   return s;
@@ -319,12 +343,12 @@ async function handle(req) {
   try {
     switch (cmd) {
       case 'capabilities':
-        return ok({ mux: 'kmux', paneTypes: ['term', 'web', 'ios'], commands: COMMANDS,
+        return ok({ mux: 'kmux', paneTypes: ['term', 'web', 'ios', 'md'], commands: COMMANDS,
           features: ['windows', 'tabs', 'fractionalSizing', 'namedPanes', 'zoom', 'move', 'lifecycle'] });
 
       case 'open': {
         const { type } = args;
-        if (!['term', 'web', 'ios'].includes(type)) throw kerr('bad_request', `unknown pane type "${type}" (term, web or ios)`);
+        if (!['term', 'web', 'ios', 'md'].includes(type)) throw kerr('bad_request', `unknown pane type "${type}" (term, web, ios or md)`);
         if (args.name && resolvePane(args.name)) throw kerr('name_taken', `a pane named "${args.name}" already exists`);
         if (args.split && !['right', 'down', 'auto'].includes(args.split)) throw kerr('bad_request', 'split must be right, down or auto');
         const size = args.size == null ? 0.5 : frac(args.size);
@@ -333,6 +357,8 @@ async function handle(req) {
         if (args.history != null && type !== 'web') throw kerr('bad_request', 'history is only for web panes');
         if (type === 'ios' && !args.app) throw kerr('bad_request', 'ios panes need an app');
         if ((args.app != null || args.device != null) && type !== 'ios') throw kerr('bad_request', 'app and device are only for ios panes');
+        if (type === 'md' && !args.path) throw kerr('bad_request', 'markdown panes need a path');
+        if (args.path != null && type !== 'md') throw kerr('bad_request', 'path is only for markdown panes');
         const w = targetWin(args.window);
         const p = createPane(type, args);
         place(p.id, w, { split: args.split || 'auto', size, tab: !!args.tab });
@@ -530,7 +556,14 @@ async function handle(req) {
 
       case 'navigate': {
         const p = need(args.pane);
-        if (p.type !== 'web') throw kerr('wrong_type', `${label(p)} is a ${p.type} pane; navigate only works on web panes`);
+        if (p.type === 'md') {
+          if (!args.path) throw kerr('bad_request', 'missing path');
+          p.path = resolvePath(p.path, args.path);
+          start(p);
+          await settled(p);
+          return ok({ pane: summary(p) });
+        }
+        if (p.type !== 'web') throw kerr('wrong_type', `${label(p)} is a ${p.type} pane; navigate only works on web and markdown panes`);
         const step = args.back ? 'back' : args.forward ? 'forward' : null;
         if (step) {
           if (!p.history) throw kerr('bad_request', `${label(p)} keeps no history; open it with history: true`);

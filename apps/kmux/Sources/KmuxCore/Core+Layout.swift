@@ -161,9 +161,30 @@ extension Core {
         moved(pane, to: url)
     }
 
+    /// A link's target relative to the file it is in: docs/a.md + ../b.md → b.md.
+    static func resolve(_ link: String, from file: String) -> String {
+        if link.hasPrefix("/") { return link }
+        var parts = file.split(separator: "/", omittingEmptySubsequences: false).dropLast().map(String.init)
+        for part in link.split(separator: "/").map(String.init) {
+            if part == ".." { if !parts.isEmpty { parts.removeLast() } } else if part != "." && !part.isEmpty { parts.append(part) }
+        }
+        return parts.joined(separator: "/")
+    }
+
     func navigate(_ args: JSON) async throws -> [String: JSON] {
         let pane = try needPane(args["pane"]?.string)
-        guard pane.type == .web else { throw KmuxError("wrong_type", "\(pane.label) is a \(pane.type.rawValue) pane; navigate only works on web panes") }
+        if pane.type == .md {
+            guard let path = args["path"]?.string, !path.isEmpty else { throw KmuxError("bad_request", "missing path") }
+            pane.path = Self.resolve(path, from: pane.path ?? "")
+            host?.stop(pane)
+            pane.state = .starting
+            pane.error = nil
+            onChange()
+            host?.start(pane)
+            await settled(pane)
+            return ["pane": model.summary(pane)]
+        }
+        guard pane.type == .web else { throw KmuxError("wrong_type", "\(pane.label) is a \(pane.type.rawValue) pane; navigate only works on web and markdown panes") }
         if let step = args["back"] == true ? "back" : args["forward"] == true ? "forward" : nil {
             guard var history = pane.history else { throw KmuxError("bad_request", "\(pane.label) keeps no history; open it with history: true") }
             guard let url = step == "back" ? history.back.popLast() : history.forward.popLast() else {

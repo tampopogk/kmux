@@ -102,6 +102,14 @@
   .site-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px; padding: 0 16px 16px; }
   .site-cards div { height: 64px; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; }
 
+  .md { flex: 1; overflow: auto; min-height: 0; background: #fff; color: #1f2328; }
+  .md-page { max-width: 760px; margin: 0 auto; padding: 18px 24px 40px; font: 14px/1.55 -apple-system, BlinkMacSystemFont, sans-serif; }
+  .md-page h1 { font-size: 1.7em; border-bottom: 1px solid #d0d7de; padding-bottom: .25em; margin: .4em 0 .6em; }
+  .md-page h2 { font-size: 1.3em; border-bottom: 1px solid #d0d7de; padding-bottom: .2em; margin: 1.2em 0 .5em; }
+  .md-page code { background: #f2f4f7; padding: .1em .35em; border-radius: 4px; font: .9em var(--mono); }
+  .md-page pre { background: #f6f8fa; padding: 10px 12px; border-radius: 6px; overflow: auto; }
+  .md-page table { border-collapse: collapse; } .md-page th, .md-page td { border: 1px solid #d0d7de; padding: 4px 10px; }
+  .md-page a { color: #0969da; } .md-page .mermaid { text-align: center; margin: 10px 0; }
   .ios { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 8px; min-height: 0; background: #12141a; container-type: size; }
   .phone { position: relative; flex: none; height: min(100cqh - 24px, (100cqw - 4px) * 19.5 / 9, 640px); aspect-ratio: 9 / 19.5; border: 6px solid #2b2f38; border-radius: 28px; background: #000; overflow: hidden; }
   .notch { position: absolute; top: 6px; left: 50%; transform: translateX(-50%); width: 34%; height: 14px; background: #2b2f38; border-radius: 10px; z-index: 2; }
@@ -155,13 +163,15 @@
       <span class="mock-tag">MOCKUP ONLY</span>
       <span>Stands in for kanna and other clients — not part of kmux. Commands become control-protocol requests; UI actions are logged as the same requests.</span>
       <span class="spacer"></span>
-      <button id="demo">Run demo</button><button id="reset">Reset</button><button id="toggle-console">Hide</button>
+      <button id="edit-file" title="Changes docs/spec.md on the mock disk, as an editor or agent would">Edit docs/spec.md</button><button id="demo">Run demo</button><button id="reset">Reset</button><button id="toggle-console">Hide</button>
     </div>
     <div id="log"></div>
     <form id="cmdform" autocomplete="off"><span>$ kanna</span><input id="cmd" placeholder="open web http://localhost:3000 --split right --size 1/3   (type help)"></form>
   </section>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
 <script src="core.js"></script>
 <script>
 // Page: renders the reference core (core.js) and stands in for kanna.
@@ -269,9 +279,10 @@ function toRequest(line) {
   };
   switch (cmd) {
     case 'open': {
-      needPos(1, 'a pane type: term, web or ios');
+      needPos(1, 'a pane type: term, web, ios or md');
       const args = { type: pos[0] };
       if (pos[0] === 'web') { needPos(2, 'a URL'); args.url = pos[1]; }
+      if (pos[0] === 'md') { needPos(2, 'a file, e.g. docs/spec.md'); args.path = pos[1]; }
       for (const k of ['name', 'cmd', 'cwd', 'app', 'device', 'size', 'window']) if (flags[k] != null) args[k] = flags[k];
       args.split = flags.split || 'auto';
       if (flags.tab) { args.tab = true; delete args.split; }
@@ -376,7 +387,7 @@ function render() {
   desk.innerHTML = '';
   if (!S.windows.length) {
     desk.append(h('div', { class: 'desktop-empty' }, 'No windows.', h('div', {},
-      ['term', 'web', 'ios'].map(type => h('button', { onclick: () => ui({ cmd: 'open', args: { ...defaultsFor(type), window: 'new' } }) }, `new ${type} window`)))));
+      ['term', 'web', 'ios', 'md'].map(type => h('button', { onclick: () => ui({ cmd: 'open', args: { ...defaultsFor(type), window: 'new' } }) }, `new ${type} window`)))));
     return;
   }
   for (const w of S.windows) desk.append(renderWindow(w));
@@ -517,6 +528,7 @@ function divider(split, i) {
 function defaultsFor(type) {
   if (type === 'web') return { type, url: 'http://localhost:3000' };
   if (type === 'ios') return { type, app: 'MyApp.app', device: 'iPhone 16' };
+  if (type === 'md') return { type, path: 'docs/spec.md' };
   return { type };
 }
 
@@ -534,6 +546,7 @@ function paneMenu(p) {
     ['New terminal', () => splitFrom(null, 'auto', 'term')],
     ['New web pane', () => splitFrom(null, 'auto', 'web')],
     ['New iOS pane', () => splitFrom(null, 'auto', 'ios')],
+    ['New markdown pane', () => splitFrom(null, 'auto', 'md')],
   ];
   const zoomed = findPane(p.id).win.zoomed === p.id;
   return [
@@ -544,6 +557,8 @@ function paneMenu(p) {
     ['Web pane below', () => splitFrom(p, 'down', 'web')],
     ['iOS pane right', () => splitFrom(p, 'right', 'ios')],
     ['iOS pane below', () => splitFrom(p, 'down', 'ios')],
+    ['Markdown pane right', () => splitFrom(p, 'right', 'md')],
+    ['Markdown pane below', () => splitFrom(p, 'down', 'md')],
     '-',
     ['Next pane', () => cyclePane(1), '⌘]'],
     ['Previous pane', () => cyclePane(-1), '⌘['],
@@ -592,7 +607,7 @@ function renderPane(p, w) {
   if (p.state === 'failed') {
     body.append(h('div', { class: 'fail' }, h('b', {}, 'Failed to start'), h('pre', {}, p.error),
       h('button', { onclick: () => ui({ cmd: 'restart', args: { pane: p.id } }) }, 'Restart')));
-  } else body.append({ term: termView, web: webView, ios: iosView }[p.type](p));
+  } else body.append({ term: termView, web: webView, ios: iosView, md: mdView }[p.type](p));
   el.append(body, h('div', {
     class: 'pane-grip', title: `Drag to move ${p.name || p.id}`,
     onpointerdown: e => startPaneDrag(e, p, el),
@@ -650,6 +665,36 @@ function webView(p) {
     wrap.append(h('div', { class: 'url-edit' }, input));
   }
   return wrap;
+}
+
+// Markdown panes: the file rendered as a readable page, diagrams drawn. The
+// mockup borrows marked and mermaid from a CDN; the app bundles its own.
+const mdScroll = {};
+function mdView(p) {
+  const page = h('article', { class: 'md-page' });
+  const text = FILES[p.path] ?? '';
+  if (window.marked) {
+    page.innerHTML = marked.parse(text);
+    page.querySelectorAll('code.language-mermaid').forEach(code => {
+      const box = h('div', { class: 'mermaid' }, code.textContent);
+      code.parentElement.replaceWith(box);
+    });
+    page.querySelectorAll('a[href]').forEach(a => a.addEventListener('click', e => {
+      e.preventDefault();
+      const href = a.getAttribute('href');
+      if (/^[a-z]+:/i.test(href)) log('info', `(would open ${href} in the default browser)`);
+      else ui({ cmd: 'navigate', args: { pane: p.id, path: href } });
+    }));
+  } else {
+    page.append(h('pre', {}, text));
+  }
+  const view = h('div', { class: 'md' }, page);
+  view.addEventListener('scroll', () => { mdScroll[p.id] = view.scrollTop; });
+  requestAnimationFrame(() => {
+    view.scrollTop = mdScroll[p.id] || 0;
+    if (window.mermaid) mermaid.run({ nodes: page.querySelectorAll('.mermaid') }).catch(() => {});
+  });
+  return view;
 }
 
 function iosView(p) {
@@ -952,6 +997,12 @@ const DEMO = [
   'list',
 ];
 let demoRunning = false;
+if (window.mermaid) mermaid.initialize({ startOnLoad: false });
+// An edit on disk: the open markdown panes show it straight away, keeping their place.
+$('#edit-file').addEventListener('click', () => {
+  FILES['docs/spec.md'] += `\n- Edited at ${new Date().toLocaleTimeString()}`;
+  render();
+});
 $('#demo').addEventListener('click', async () => {
   if (demoRunning) return;
   demoRunning = true;

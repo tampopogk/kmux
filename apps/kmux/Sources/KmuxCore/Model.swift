@@ -1,6 +1,6 @@
 import Foundation
 
-public enum PaneType: String, Sendable { case term, web, ios }
+public enum PaneType: String, Sendable { case term, web, ios, md }
 public enum PaneState: String, Sendable { case starting, running, exited, failed }
 public enum Axis: String, Sendable { case row, column }
 
@@ -18,6 +18,8 @@ public final class Pane {
     /// device it runs on (a name or UDID; the host fills in the one it chose).
     public var app: String?
     public var device: String?
+    /// The markdown file a `md` pane shows.
+    public var path: String?
     /// Back/forward history, kept only for web panes opened with `history: true`.
     public var history: History?
 
@@ -284,6 +286,7 @@ public final class Model {
             out["app"] = pane.app.map(JSON.string) ?? .null
             out["device"] = pane.device.map(JSON.string) ?? .null
         }
+        if pane.type == .md { out["path"] = pane.path.map(JSON.string) ?? .null }
         if let code = pane.exitCode { out["exitCode"] = .number(Double(code)) }
         if let error = pane.error { out["error"] = .string(error) }
         return .object(out)

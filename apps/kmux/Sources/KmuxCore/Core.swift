@@ -84,7 +84,7 @@ public final class Core {
     private func run(_ cmd: String, _ args: JSON) async throws -> [String: JSON] {
         switch cmd {
         case "capabilities":
-            return ["mux": "kmux", "instance": .string(instance.name), "paneTypes": ["term", "web", "ios"], "commands": .array(Self.commands.sorted().map(JSON.string)), "features": ["windows", "tabs", "fractionalSizing", "namedPanes", "zoom", "lifecycle"]]
+            return ["mux": "kmux", "instance": .string(instance.name), "paneTypes": ["term", "web", "ios", "md"], "commands": .array(Self.commands.sorted().map(JSON.string)), "features": ["windows", "tabs", "fractionalSizing", "namedPanes", "zoom", "lifecycle"]]
         case "open": return try await open(args)
         case "list": return list()
         case "close": return try close(args)
@@ -128,11 +128,13 @@ public final class Core {
 
     private func open(_ args: JSON) async throws -> [String: JSON] {
         let typeName = args["type"]?.string ?? ""
-        guard let type = PaneType(rawValue: typeName) else { throw KmuxError("bad_request", "unknown pane type \"\(typeName)\" (term, web or ios)") }
+        guard let type = PaneType(rawValue: typeName) else { throw KmuxError("bad_request", "unknown pane type \"\(typeName)\" (term, web, ios or md)") }
         if type == .ios, args["app"]?.string?.isEmpty ?? true { throw KmuxError("bad_request", "ios panes need an app") }
         if args["app"] != nil || args["device"] != nil, type != .ios { throw KmuxError("bad_request", "app and device are only for ios panes") }
         if type == .web, args["url"]?.string?.isEmpty ?? true { throw KmuxError("bad_request", "web panes need a url") }
         if args["history"] != nil, type != .web { throw KmuxError("bad_request", "history is only for web panes") }
+        if type == .md, args["path"]?.string?.isEmpty ?? true { throw KmuxError("bad_request", "markdown panes need a path") }
+        if args["path"] != nil, type != .md { throw KmuxError("bad_request", "path is only for markdown panes") }
         let name = args["name"]?.string
         if let name, model.pane(name) != nil { throw KmuxError("name_taken", "a pane named \"\(name)\" already exists") }
         let split = args["split"]?.string ?? "auto"
@@ -147,6 +149,7 @@ public final class Core {
         pane.url = args["url"]?.string.map(Self.normalizeURL)
         pane.app = args["app"]?.string
         pane.device = args["device"]?.string
+        pane.path = args["path"]?.string
         if type == .web, args["history"] == true { pane.history = History() }
         place(pane.id, in: window, split: split, size: size, newTab: args["tab"]?.bool ?? false)
         window.focused = pane.id
