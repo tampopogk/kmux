@@ -8,10 +8,13 @@
 //   swift apps/kmux/Icon/make-icon.swift --out DIR           # where kmux.icns (and the .iconset) go
 //   swift apps/kmux/Icon/make-icon.swift --sheet out.png [--only v01,v02]  # contact sheet: 512/64/32/16 px, light + dark
 //   swift apps/kmux/Icon/make-icon.swift --zoom out.png [--only v01,v02]   # 32 and 16 px blown up to judge pixels
+//   swift apps/kmux/Icon/make-icon.swift --sheet2 out.png [--only v11,v12] # round two: 32 px lettered and as quadrants
+//   swift apps/kmux/Icon/make-icon.swift --family out.png --kanna kanna.png [--only v11,v13]  # beside Kanna.app's icon
+//   --quad N: draw v11-v16 as four quadrants up to N px (default 16)
 //
 // Variants: dark-stack (default: the only one whose letters survive at 16 and 32 px),
 // dark-row, light-row ("km|ux" in one line; reads best large, smears below 32 px).
-// v01-v10: explorations for choosing a new icon (see "Explorations" below); selectable with --variant.
+// v01-v10, v11-v16 (Kanna.app's icon palette): explorations for choosing a new icon (see "Explorations" below); selectable with --variant.
 //
 // Palette: Kanna's UI tokens (kanna-v3 apps/kanna3-mac/Sources/Kanna3Mac/Theme.swift).
 // Letters k m u x are warn, bad, machine, accent: the amber -> red -> purple -> blue
@@ -475,6 +478,248 @@ func v10(_ r: R) {
     ctx.restoreGState()
 }
 
+// MARK: Explorations v11-v16: Kanna.app's own icon palette
+//
+// Kanna.app's icon: a near-white tile with rounded pills in smooth left-to-right gradients
+// (pink-red -> orange, magenta, purple, indigo -> violet, blue) and a bright green cursor pill.
+// Each letter gets one of those gradients: k orange, m magenta, u purple, x blue; the bar is
+// the green cursor. At the smallest sizes the letters go and four quadrants in the same
+// gradients remain: a 2x2 pane grid.
+
+struct Grad { let a: CGColor, b: CGColor }
+let kanna = (k: Grad(a: rgb(0xfe6574), b: rgb(0xff9c1b)),     // top row: hot pink-red -> orange
+             m: Grad(a: rgb(0xec45b1), b: rgb(0xf54aa2)),     // magenta -> pink
+             u: Grad(a: rgb(0xb44ae2), b: rgb(0x7f5db4)),     // purple -> violet
+             x: Grad(a: rgb(0x1665c3), b: rgb(0x3f58c2)),     // blue -> indigo
+             cursor: rgb(0x00df65),
+             tileTop: rgb(0xfffeff), tileBottom: rgb(0xf4f4f5), rim: rgb(0x000000, 0.09))
+let kannaGrads = [kanna.k, kanna.m, kanna.u, kanna.x]
+
+/// Largest size (px) drawn as four quadrants instead of letters. The sheet renders 32 px both
+/// ways; 16 is where letters stop being letters, so that is the default switch.
+var quadMax = 16
+
+/// Fills `path` with a left-to-right gradient across its bounds (Kanna's pills run this way).
+func fillGrad(_ r: R, _ path: CGPath, _ g: Grad) {
+    let ctx = r.ctx, b = path.boundingBoxOfPath
+    ctx.saveGState()
+    ctx.addPath(path); ctx.clip()
+    let cg = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB)!, colors: [g.a, g.b] as CFArray, locations: [0, 1])!
+    ctx.drawLinearGradient(cg, start: CGPoint(x: b.minX, y: b.midY), end: CGPoint(x: b.maxX, y: b.midY),
+                           options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
+    ctx.restoreGState()
+}
+
+func kannaTile(_ r: R, darkTile: Bool) {
+    if darkTile { beginTile(r, rgb(0x24232a), rgb(0x111015), edge: rgb(0xffffff, 0.12)) }
+    else { beginTile(r, kanna.tileTop, kanna.tileBottom, edge: kanna.rim) }
+}
+
+/// The small-size form: four quadrants, one letter's gradient each, on the tile.
+/// Returns false when the size is large enough for letters.
+func quadrants(_ r: R, darkTile: Bool) -> Bool {
+    guard r.size <= quadMax else { return false }
+    kannaTile(r, darkTile: darkTile)
+    // Whole-pixel geometry: tile edge, a 1 px tile border and a 1 px cross between panes.
+    let t = r.pix(tileRect)
+    let b = r.px, g = r.px
+    let cx = r.pix(512 - g / 2)
+    let rects = [
+        CGRect(x: t.minX + b, y: cx + g, width: cx - t.minX - b, height: t.maxY - b - cx - g),
+        CGRect(x: cx + g, y: cx + g, width: t.maxX - b - cx - g, height: t.maxY - b - cx - g),
+        CGRect(x: t.minX + b, y: t.minY + b, width: cx - t.minX - b, height: cx - t.minY - b),
+        CGRect(x: cx + g, y: t.minY + b, width: t.maxX - b - cx - g, height: cx - t.minY - b),
+    ]
+    let rad = r.size <= 16 ? 0 : r.px   // a hint of roundness once there are pixels to spend
+    for (i, rc) in rects.enumerated() {
+        fillGrad(r, panePath(rc, index: i, outer: rad * 5, inner: rad), kannaGrads[i])
+    }
+    r.ctx.restoreGState()
+    return true
+}
+
+func roundedHeavy(_ size: CGFloat) -> CTFont { sysFont(size, .heavy, .rounded) }
+
+/// Letters k m / u x set as words in SF Rounded, each filled with its gradient.
+func kannaWords(_ r: R, size: CGFloat, tracking: CGFloat, lead: CGFloat, centreY: CGFloat = 512) -> [Glyph] {
+    let c = rgb(0)   // colour unused: glyphs are gradient-filled
+    return words([[("k", c), ("m", c)], [("u", c), ("x", c)]], roundedHeavy(size), tracking: tracking, lead: lead, centreY: centreY, r)
+}
+
+func fillKanna(_ r: R, _ gs: [Glyph]) {
+    for (i, g) in gs.enumerated() { fillGrad(r, g.path, kannaGrads[i]) }
+}
+
+func cursorPill(_ r: R, _ rc: CGRect, glow: Bool = false) {
+    let ctx = r.ctx
+    ctx.saveGState()
+    if glow { ctx.setShadow(offset: .zero, blur: 30 * r.scale, color: kanna.cursor.copy(alpha: 0.55)!) }
+    ctx.addPath(roundRect(rc, min(rc.width, rc.height) / 2)); ctx.setFillColor(kanna.cursor); ctx.fillPath()
+    ctx.restoreGState()
+}
+
+/// "km" + cursor over "ux", left-aligned like Kanna's rows of pills.
+func kannaRows(_ r: R, darkTile: Bool) {
+    if quadrants(r, darkTile: darkTile) { return }
+    kannaTile(r, darkTile: darkTile)
+    var gs = kannaWords(r, size: r.small ? 360 : 310, tracking: r.small ? 20 : 8, lead: r.small ? 330 : 290)
+    let top = gs[0].path.boundingBoxOfPath.union(gs[1].path.boundingBoxOfPath)
+    let bot = gs[2].path.boundingBoxOfPath.union(gs[3].path.boundingBoxOfPath)
+    let mb = gs[1].path.boundingBoxOfPath
+    let pillW = mb.height * (r.small ? 0.5 : 0.40), pillGap = mb.height * 0.28
+    let width = top.width + pillGap + pillW
+    let dx = (512 - width / 2) - top.minX
+    gs = gs.enumerated().map { i, g in
+        Glyph(path: moved(g.path, dx + (i >= 2 ? top.minX - bot.minX : 0), 0), color: g.color, letter: g.letter)
+    }
+    fillKanna(r, gs)
+    let m = gs[1].path.boundingBoxOfPath
+    cursorPill(r, r.pix(CGRect(x: m.maxX + pillGap, y: m.minY, width: pillW, height: m.height)), glow: darkTile && !r.small)
+    r.ctx.restoreGState()
+}
+
+// v11: Kanna rows on Kanna's light tile: "km" + green cursor, "ux" below, left-aligned.
+func v11(_ r: R) { kannaRows(r, darkTile: false) }
+
+// v12: centred stack, the green cursor pill laid flat as the bar between km and ux.
+func v12(_ r: R) {
+    if quadrants(r, darkTile: false) { return }
+    kannaTile(r, darkTile: false)
+    let gs = kannaWords(r, size: r.small ? 400 : 330, tracking: r.small ? 24 : 10, lead: r.small ? 360 : 310)
+    fillKanna(r, gs)
+    let top = gs[0].path.boundingBoxOfPath.union(gs[1].path.boundingBoxOfPath)
+    let u = gs[2].path.boundingBoxOfPath
+    let h: CGFloat = r.small ? 2 * r.px : 36
+    cursorPill(r, r.pix(CGRect(x: top.minX + 20, y: (top.minY + u.maxY) / 2 - h / 2, width: top.width - 40, height: h)))
+    r.ctx.restoreGState()
+}
+
+// v13: four gradient pane tiles with white letters: the quadrant form, lettered.
+func v13(_ r: R) {
+    if quadrants(r, darkTile: false) { return }
+    kannaTile(r, darkTile: false)
+    let ctx = r.ctx
+    let ps = panes(inset: r.small ? 24 : 46, gap: r.small ? r.px : 28, r)
+    let f = roundedHeavy(r.small ? 400 : 320)
+    let rows = [[("k", rgb(0xffffff)), ("m", rgb(0xffffff))], [("u", rgb(0xffffff)), ("x", rgb(0xffffff))]]
+    let gs = grid([rows[0]], f, cols: [ps[0].midX, ps[1].midX], lead: 0, centre: CGPoint(x: 512, y: ps[0].midY), r)
+        + grid([rows[1]], f, cols: [ps[2].midX, ps[3].midX], lead: 0, centre: CGPoint(x: 512, y: ps[2].midY), r)
+    for (i, rc) in ps.enumerated() {
+        fillGrad(r, panePath(rc, index: i, outer: r.small ? r.px * 2 : 140, inner: r.small ? r.px : 44), kannaGrads[i])
+        ctx.saveGState()
+        if !r.small { ctx.setShadow(offset: CGSize(width: 0, height: -5 * r.scale), blur: 12 * r.scale, color: rgb(0, 0.18)) }
+        ctx.addPath(gs[i].path); ctx.setFillColor(rgb(0xffffff)); ctx.fillPath()
+        ctx.restoreGState()
+    }
+    ctx.restoreGState()
+}
+
+// v14: k m over u x on the light tile, a tall green cursor between the columns.
+func v14(_ r: R) {
+    if quadrants(r, darkTile: false) { return }
+    kannaTile(r, darkTile: false)
+    let f = roundedHeavy(r.small ? 380 : 290)
+    let c = rgb(0), off: CGFloat = r.small ? 200 : 200
+    let gs = grid([[("k", c), ("m", c)], [("u", c), ("x", c)]], f, cols: [512 - off, 512 + off],
+                  lead: r.small ? 360 : 310, centre: CGPoint(x: 512, y: 512), r)
+    fillKanna(r, gs)
+    let all = gs.reduce(CGRect.null) { $0.union($1.path.boundingBoxOfPath) }
+    let w: CGFloat = r.small ? 2 * r.px : 46
+    cursorPill(r, r.pix(CGRect(x: 512 - w / 2, y: all.minY + 20, width: w, height: all.height - 40)))
+    r.ctx.restoreGState()
+}
+
+// v15: v11 on a dark tile: the one dark alternative, with a glowing cursor.
+func v15(_ r: R) { kannaRows(r, darkTile: true) }
+
+// v16: four gradient dots (Kanna's round pills) in a 2x2, white letters, green cursor dot
+// tucked in the middle.
+func v16(_ r: R) {
+    if quadrants(r, darkTile: false) { return }
+    kannaTile(r, darkTile: false)
+    let ctx = r.ctx
+    let d: CGFloat = r.small ? 360 : 312, off: CGFloat = r.small ? 185 : 168
+    let centres = [CGPoint(x: 512 - off, y: 512 + off), CGPoint(x: 512 + off, y: 512 + off),
+                   CGPoint(x: 512 - off, y: 512 - off), CGPoint(x: 512 + off, y: 512 - off)]
+    let f = roundedHeavy(r.small ? 330 : 236)
+    let w = rgb(0xffffff)
+    let gs = grid([[("k", w), ("m", w)]], f, cols: [centres[0].x, centres[1].x], lead: 0, centre: CGPoint(x: 512, y: centres[0].y), r)
+        + grid([[("u", w), ("x", w)]], f, cols: [centres[2].x, centres[3].x], lead: 0, centre: CGPoint(x: 512, y: centres[2].y), r)
+    for (i, c) in centres.enumerated() {
+        let dot = CGPath(ellipseIn: r.pix(CGRect(x: c.x - d / 2, y: c.y - d / 2, width: d, height: d)), transform: nil)
+        fillGrad(r, dot, kannaGrads[i])
+        ctx.addPath(gs[i].path); ctx.setFillColor(w); ctx.fillPath()
+    }
+    if !r.small { cursorPill(r, CGRect(x: 512 - 34, y: 512 - 56, width: 68, height: 112)) }
+    ctx.restoreGState()
+}
+
+/// Round-two sheet: per variant, 512 / 64 / 32 letters / 32 quadrants / 16 quadrants, on a light
+/// and a dark backdrop.
+func makeSheet2(_ names: [String], _ url: URL) {
+    let vs = names.compactMap { n in variants.first { $0.name == n } }
+    let pad: CGFloat = 32, labelH: CGFloat = 56
+    let half = pad + 512 + pad + 64 + pad + 32 + pad + 32 + pad + 16 + pad
+    let rowH = labelH + 512 + 2 * pad
+    let width = 2 * half, height = rowH * CGFloat(vs.count)
+    let ctx = CGContext(data: nil, width: Int(width), height: Int(height), bitsPerComponent: 8, bytesPerRow: 0,
+                        space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+    ctx.interpolationQuality = .none
+    for (i, v) in vs.enumerated() {
+        let y0 = height - rowH * CGFloat(i + 1)
+        for (j, bg) in [(rgb(0xececec), rgb(0x1d2026)), (rgb(0x2b2e33), rgb(0xe6e8eb))].enumerated() {
+            let x0 = CGFloat(j) * half
+            ctx.setFillColor(bg.0); ctx.fill(CGRect(x: x0, y: y0, width: half, height: rowH))
+            var x = x0 + pad
+            for (s, q) in [(512, 16), (64, 16), (32, 16), (32, 32), (16, 16)] {
+                quadMax = q
+                let yy = y0 + pad + (s == 512 ? 0 : 256 - CGFloat(s) / 2)
+                ctx.draw(render(v, size: s), in: CGRect(x: x, y: yy, width: CGFloat(s), height: CGFloat(s)))
+                x += CGFloat(s) + pad
+            }
+            if j == 0 {
+                drawText("\(v.name)  \(v.note)", font(28, weight: .semibold), bg.1, at: CGPoint(x: x0 + pad, y: y0 + rowH - labelH + 8), in: ctx)
+            } else {
+                drawText("64   32   32q  16q", font(18, weight: .medium), bg.1, at: CGPoint(x: x0 + pad + 512 + pad, y: y0 + 256 + 60), in: ctx)
+            }
+        }
+        ctx.setFillColor(rgb(0x888888)); ctx.fill(CGRect(x: 0, y: y0, width: width, height: 2))
+    }
+    quadMax = 16
+    writePNG(ctx.makeImage()!, url)
+    print("Wrote \(url.path)")
+}
+
+/// Family check: Kanna.app's icon beside chosen variants at 512 and 64 px, on light and dark.
+func makeFamily(_ kannaPNG: URL, _ names: [String], _ url: URL) {
+    guard let src = NSImage(contentsOf: kannaPNG)?.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+        fatalError("can't read \(kannaPNG.path)")
+    }
+    let vs = names.compactMap { n in variants.first { $0.name == n } }
+    let pad: CGFloat = 32, cell: CGFloat = 512, labelH: CGFloat = 48
+    let n = CGFloat(vs.count + 1)
+    let width = pad + n * (cell + pad), bandH = labelH + cell + pad + 64 + 2 * pad
+    let height = 2 * bandH
+    let ctx = CGContext(data: nil, width: Int(width), height: Int(height), bitsPerComponent: 8, bytesPerRow: 0,
+                        space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+    ctx.interpolationQuality = .high
+    for (j, bg) in [(rgb(0xececec), rgb(0x1d2026)), (rgb(0x2b2e33), rgb(0xe6e8eb))].enumerated() {
+        let y0 = height - bandH * CGFloat(j + 1)
+        ctx.setFillColor(bg.0); ctx.fill(CGRect(x: 0, y: y0, width: width, height: bandH))
+        for i in 0..<Int(n) {
+            let x = pad + CGFloat(i) * (cell + pad)
+            let label = i == 0 ? "Kanna.app" : vs[i - 1].name
+            if j == 0 { drawText(label, font(28, weight: .semibold), bg.1, at: CGPoint(x: x, y: y0 + bandH - labelH + 8), in: ctx) }
+            for (s, yy) in [(cell, y0 + pad + 64 + pad), (64, y0 + pad)] {
+                let rc = CGRect(x: x + (s == 64 ? (cell - 64) / 2 : 0), y: yy, width: CGFloat(s), height: CGFloat(s))
+                ctx.draw(i == 0 ? src : render(vs[i - 1], size: Int(s)), in: rc)
+            }
+        }
+    }
+    writePNG(ctx.makeImage()!, url)
+    print("Wrote \(url.path)")
+}
+
 let explorations: [Variant] = [
     Variant(name: "v01", palette: dark, layout: .stack, note: "two panes: k/m | u/x, divider bar", draw: v01),
     Variant(name: "v02", palette: dark, layout: .stack, note: "2x2 panes, split lines", draw: v02),
@@ -486,6 +731,12 @@ let explorations: [Variant] = [
     Variant(name: "v08", palette: dark, layout: .stack, note: "macOS 26 glass panes", draw: v08),
     Variant(name: "v09", palette: dark, layout: .stack, note: "serif (New York), green bar", draw: v09),
     Variant(name: "v10", palette: dark, layout: .stack, note: "green cursor pill between columns", draw: v10),
+    Variant(name: "v11", palette: light, layout: .stack, note: "Kanna rows: km + green cursor / ux", draw: v11),
+    Variant(name: "v12", palette: light, layout: .stack, note: "centred km / ux, flat green cursor bar", draw: v12),
+    Variant(name: "v13", palette: light, layout: .stack, note: "gradient pane tiles, white letters", draw: v13),
+    Variant(name: "v14", palette: light, layout: .stack, note: "k m / u x, tall green cursor between", draw: v14),
+    Variant(name: "v15", palette: dark, layout: .stack, note: "Kanna rows on a dark tile", draw: v15),
+    Variant(name: "v16", palette: light, layout: .stack, note: "gradient dots, white letters", draw: v16),
 ]
 
 /// Contact sheet: one row per variant, its number, then 512/64/32/16 px at actual size on a
@@ -768,12 +1019,21 @@ func option(_ name: String) -> String? {
     return args[i + 1]
 }
 let scriptDir = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()
+if let q = option("--quad") { quadMax = Int(q) ?? quadMax }   // largest size drawn as quadrants
 if let preview = option("--preview") {
     makePreview(URL(fileURLWithPath: preview))
 } else if let sheet = option("--sheet") {
     // --sheet out.png [--only v01,v02,...]: contact sheet of the exploration variants.
     let names = option("--only")?.split(separator: ",").map(String.init) ?? explorations.map(\.name)
     makeSheet(names, URL(fileURLWithPath: sheet))
+} else if let sheet = option("--sheet2") {
+    // --sheet2 out.png [--only v11,...]: round-two sheet, 32 px shown both lettered and as quadrants.
+    makeSheet2(option("--only")?.split(separator: ",").map(String.init) ?? ["v11", "v12", "v13", "v14", "v15", "v16"],
+               URL(fileURLWithPath: sheet))
+} else if let fam = option("--family") {
+    // --family out.png --kanna kanna-icon.png [--only v11,v14]: side by side with Kanna.app's icon.
+    makeFamily(URL(fileURLWithPath: option("--kanna") ?? "kanna-icon.png"),
+               option("--only")?.split(separator: ",").map(String.init) ?? ["v11", "v12", "v14"], URL(fileURLWithPath: fam))
 } else if let zoom = option("--zoom") {
     let names = option("--only")?.split(separator: ",").map(String.init) ?? explorations.map(\.name)
     makeZoom(names, URL(fileURLWithPath: zoom))
