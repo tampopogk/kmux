@@ -582,10 +582,20 @@ func kannaRows(_ r: R, darkTile: Bool) {
 func v11(_ r: R) { kannaRows(r, darkTile: false) }
 
 // v12: centred stack, the green cursor pill laid flat as the bar between km and ux.
-func v12(_ r: R) {
+func v12(_ r: R) { v12Font(r, roundedHeavy, tracking: 10) }
+
+/// v12 in another font. The font is sized so its x-height matches SF Rounded Heavy at the
+/// original v12 size, so every font alternative has the same optical size; `tracking` is in
+/// 1024 units at large sizes (small sizes add their own).
+func v12Font(_ r: R, _ make: (CGFloat) -> CTFont, tracking: CGFloat, scale: CGFloat = 1) {
     if quadrants(r, darkTile: false) { return }
     kannaTile(r, darkTile: false)
-    let gs = kannaWords(r, size: r.small ? 400 : 330, tracking: r.small ? 24 : 10, lead: r.small ? 360 : 310)
+    let base: CGFloat = r.small ? 400 : 330
+    let target = CTFontGetXHeight(roundedHeavy(base)) * scale
+    let f = make(base * target / CTFontGetXHeight(make(base)))
+    let c = rgb(0)
+    let gs = words([[("k", c), ("m", c)], [("u", c), ("x", c)]], f, tracking: tracking + (r.small ? 14 : 0),
+                   lead: r.small ? 360 : 310, centreY: 512, r)
     fillKanna(r, gs)
     let top = gs[0].path.boundingBoxOfPath.union(gs[1].path.boundingBoxOfPath)
     let u = gs[2].path.boundingBoxOfPath
@@ -593,6 +603,14 @@ func v12(_ r: R) {
     cursorPill(r, r.pix(CGRect(x: top.minX + 20, y: (top.minY + u.maxY) / 2 - h / 2, width: top.width - 40, height: h)))
     r.ctx.restoreGState()
 }
+
+func sfPro(_ w: NSFont.Weight) -> (CGFloat) -> CTFont { { sysFont($0, w, .default) } }
+// v12a-e: v12's font alternatives (crisper than SF Rounded).
+func v12a(_ r: R) { v12Font(r, sfPro(.bold), tracking: 6) }
+func v12b(_ r: R) { v12Font(r, sfPro(.heavy), tracking: 6) }
+func v12c(_ r: R) { v12Font(r, sfPro(.semibold), tracking: 22, scale: 1.02) }
+func v12d(_ r: R) { v12Font(r, { sysFont($0, .bold, .monospaced) }, tracking: -10) }
+func v12e(_ r: R) { v12Font(r, { NSFont.systemFont(ofSize: $0, weight: .black, width: .condensed) as CTFont }, tracking: 14, scale: 1.04) }
 
 // v13: four gradient pane tiles with white letters: the quadrant form, lettered.
 func v13(_ r: R) {
@@ -733,6 +751,11 @@ let explorations: [Variant] = [
     Variant(name: "v10", palette: dark, layout: .stack, note: "green cursor pill between columns", draw: v10),
     Variant(name: "v11", palette: light, layout: .stack, note: "Kanna rows: km + green cursor / ux", draw: v11),
     Variant(name: "v12", palette: light, layout: .stack, note: "centred km / ux, flat green cursor bar", draw: v12),
+    Variant(name: "v12a", palette: light, layout: .stack, note: "v12 in SF Pro Bold", draw: v12a),
+    Variant(name: "v12b", palette: light, layout: .stack, note: "v12 in SF Pro Heavy", draw: v12b),
+    Variant(name: "v12c", palette: light, layout: .stack, note: "v12 in SF Pro Semibold, wider tracking", draw: v12c),
+    Variant(name: "v12d", palette: light, layout: .stack, note: "v12 in SF Mono Bold", draw: v12d),
+    Variant(name: "v12e", palette: light, layout: .stack, note: "v12 in SF Pro Condensed Black", draw: v12e),
     Variant(name: "v13", palette: light, layout: .stack, note: "gradient pane tiles, white letters", draw: v13),
     Variant(name: "v14", palette: light, layout: .stack, note: "k m / u x, tall green cursor between", draw: v14),
     Variant(name: "v15", palette: dark, layout: .stack, note: "Kanna rows on a dark tile", draw: v15),
