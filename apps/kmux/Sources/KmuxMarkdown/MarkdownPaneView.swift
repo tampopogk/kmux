@@ -42,6 +42,7 @@ public final class MarkdownPaneView: NSView, NSTextViewDelegate {
         textView = MarkdownTextView(frame: NSRect(x: 0, y: 0, width: 600, height: 400), textContainer: container)
         super.init(frame: .zero)
         configureTextView()
+        scrollView.contentView = CenteringClipView()
         scrollView.documentView = textView
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
@@ -287,9 +288,27 @@ public final class MarkdownPaneView: NSView, NSTextViewDelegate {
     public func scroll(toY y: CGFloat) { textView.scroll(NSPoint(x: 0, y: max(0, y))) }
 }
 
+/// The scroll view's clip view: centres the page when it is magnified to less
+/// than the pane's width, and a click beside or below it focuses the pane.
+private final class CenteringClipView: NSClipView {
+    override func constrainBoundsRect(_ proposedBounds: NSRect) -> NSRect {
+        var rect = super.constrainBoundsRect(proposedBounds)
+        if let page = documentView?.frame, rect.width > page.width { rect.origin.x = (page.width - rect.width) / 2 }
+        return rect
+    }
+
+    // A click there selects nothing, so it can focus the pane in an inactive window too.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(documentView)
+        super.mouseDown(with: event)
+    }
+}
+
 /// The text view inside a markdown pane: reports focus and adds kmux's pane
 /// menu to its own.
-final class MarkdownTextView: NSTextView {
+public final class MarkdownTextView: NSTextView {
     var onFocus: (() -> Void)?
     var contextMenu: (() -> NSMenu?)?
     /// The pane's unmagnified width. Magnifying shrinks the scroll view's
@@ -297,17 +316,17 @@ final class MarkdownTextView: NSTextView {
     /// re-wrap the text; the width stays this instead.
     var layoutWidth: CGFloat = 0
 
-    override func setFrameSize(_ newSize: NSSize) {
+    public override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(NSSize(width: layoutWidth > 0 ? layoutWidth : newSize.width, height: newSize.height))
     }
 
-    override func becomeFirstResponder() -> Bool {
+    public override func becomeFirstResponder() -> Bool {
         let result = super.becomeFirstResponder()
         if result { onFocus?() }
         return result
     }
 
-    override func menu(for event: NSEvent) -> NSMenu? {
+    public override func menu(for event: NSEvent) -> NSMenu? {
         window?.makeFirstResponder(self)
         let menu = super.menu(for: event) ?? NSMenu()
         if let extra = contextMenu?() {

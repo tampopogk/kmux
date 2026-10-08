@@ -1,6 +1,7 @@
 import AppKit
 import WebKit
 import KmuxCore
+import KmuxMarkdown
 
 /// One kmux window: draws the active tab's split tree.
 @MainActor
@@ -61,10 +62,11 @@ final class WindowController: NSObject, NSWindowDelegate {
             view.focused = shown.count > 1 && id == state.focused && window.isKeyWindow
         }
         // Keyboard focus follows the model's focused pane, but only takes over
-        // from another terminal or from nothing: a tab being renamed keeps it.
+        // from another pane's view or from nothing: a tab being renamed keeps it.
         let responder = window.firstResponder
         if let focused = state.focused, let target = host.keyView(focused), responder !== target,
-           responder == nil || responder === window || responder is TerminalSurfaceView || responder is FocusReportingWebView {
+           responder == nil || responder === window || responder is TerminalSurfaceView || responder is FocusReportingWebView
+           || responder is MarkdownTextView {
             window.makeFirstResponder(target)
         }
     }

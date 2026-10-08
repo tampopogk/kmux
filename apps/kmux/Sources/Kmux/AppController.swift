@@ -101,10 +101,12 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
         // A trackpad pinch over the middle of `pane`, sent through its window as
         // magnify events (`steps`: each event's magnification). Replies with the
-        // zoom after each step.
+        // zoom after each step. `outline: true` shows the pane's focus outline
+        // first, as a key window would (a --bg instance is never key).
         core.extraCommands["debug.pinch"] = { [weak self] args in
             guard let self, let id = try Optional(core.needPane(args["pane"]?.string).id), let view = host.keyView(id),
                   let window = view.window else { throw KmuxError("wrong_type", "pane is not on screen") }
+            if args["outline"]?.bool == true { host.views[id]?.focused = true }
             var steps = [0.1, 0.1, 0.1, 0.1, 0.1]
             if case .array(let list)? = args["steps"] { steps = list.compactMap(\.number) }
             let point = view.convert(NSPoint(x: view.visibleRect.midX, y: view.visibleRect.midY), to: nil)
@@ -728,13 +730,25 @@ final class AppController: NSObject, NSApplicationDelegate {
         return ["characters": .string(event.characters ?? ""), "charactersIgnoringModifiers": .string(event.charactersIgnoringModifiers ?? "")]
     }
 
-    /// `debug.click`: clicks a tab (`tab`, `clicks`) with mouse events sent
+    /// `debug.click`: clicks a tab (`tab`, `clicks`), or a pane (`pane`, `at`), with mouse events sent
     /// through AppKit's normal event path.
     private func click(_ args: JSON) throws -> [String: JSON] {
-        let id = args["tab"]?.string ?? ""
-        guard let state = core.model.windows.first(where: { $0.tabs.contains { $0.id == id } }), let controller = controllers[state.id],
-              let point = controller.tabBar.center(of: id) else { throw KmuxError("not_found", "no tab \"\(id)\" on screen") }
-        let window = controller.window
+        let window: NSWindow, point: NSPoint
+        if args["pane"] != nil {
+            // `at`: [x, y] from the pane's top left.
+            let id = try core.needPane(args["pane"]?.string).id
+            guard let view = host.views[id], let paneWindow = view.window else { throw KmuxError("not_found", "pane \"\(id)\" is not on screen") }
+            var at = [view.bounds.midX, view.bounds.midY]
+            if case .array(let list)? = args["at"] { at = list.compactMap(\.number).map { CGFloat($0) } }
+            window = paneWindow
+            point = view.convert(NSPoint(x: at[0], y: view.bounds.height - at[1]), to: nil)
+        } else {
+            let id = args["tab"]?.string ?? ""
+            guard let state = core.model.windows.first(where: { $0.tabs.contains { $0.id == id } }), let controller = controllers[state.id],
+                  let center = controller.tabBar.center(of: id) else { throw KmuxError("not_found", "no tab \"\(id)\" on screen") }
+            window = controller.window
+            point = center
+        }
         for count in 1...max(1, Int(args["clicks"]?.number ?? 1)) {
             func event(_ type: NSEvent.EventType) -> NSEvent? {
                 NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,

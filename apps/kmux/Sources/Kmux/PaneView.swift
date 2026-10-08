@@ -8,7 +8,7 @@ final class PaneView: NSView {
     let id: String
     let content: NSView
     private let notice = NSTextField(labelWithString: "")
-    private let outline = NSView()
+    private let outline = Outline()
     let grip = PaneGrip(frame: NSRect(origin: .zero, size: PaneGrip.size))
 
     init(id: String, content: NSView) {
@@ -67,4 +67,10 @@ final class PaneView: NSView {
         notice.frame.origin = NSPoint(x: (bounds.width - notice.frame.width) / 2, y: 12)
         grip.frame.origin = NSPoint(x: ((bounds.width - PaneGrip.size.width) / 2).rounded(), y: bounds.height - PaneGrip.size.height)
     }
+}
+
+/// The focus outline: drawn over the pane but never hit, so clicks, scrolls and
+/// pinches still reach the content under it.
+private final class Outline: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }

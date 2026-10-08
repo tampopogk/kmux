@@ -217,7 +217,7 @@ dg="$(raw '{"id":1,"cmd":"debug.diagram","args":{"source":"flowchart LR\n  A[KMU
 
 # 8c. Markdown panes: rendered natively (no web view), diagrams drawn,
 # live reload, navigate, magnification (keys and a smooth pinch, never
-# re-wrapping the text), a missing file.
+# re-wrapping the text, focused or not), clicks beside the page, a missing file.
 mkdir -p "$out/docs"
 cat > "$out/docs/spec.md" <<'MD'
 # KMUX MD OK
@@ -267,6 +267,27 @@ PY
 sleep 1 # the scroll view finishes the gesture before keys act again
 raw '{"id":1,"cmd":"debug.key","args":{"key":"cmd+0"}}' >/dev/null
 [[ "$(mdzoom)" == 1 ]] || fail "⌘0 after a pinch should go back to actual size: $(mdzoom)"
+# Pinch and keys reach the pane with its focus outline showing, focused or not.
+"$cli" open --window "$mdw" --name mdterm --split right >/dev/null
+mdfocused() { win "$mdw" focused | tr -d '"'; }
+mdpinch() { # mdpinch OUTLINE: pinches the doc open, printing the zoom before and after
+  local before; before="$(mdzoom)"
+  echo "$before → $(field zooms.3 <<<"$(raw "{\"id\":1,\"cmd\":\"debug.pinch\",\"args\":{\"pane\":\"doc\",\"outline\":$1,\"steps\":[0.05,0.05,0.05,0.05]}}")")"
+}
+zoomed() { python3 -c 'import sys; a, b = map(float, sys.argv[1].split(" → ")); sys.exit(not b > a * 1.2)' "$1"; }
+[[ "$(mdfocused)" == mdterm ]] || fail "the new terminal should take focus"
+pinched="$(mdpinch false)"; zoomed "$pinched" || fail "a pinch should zoom an unfocused markdown pane: $pinched"
+raw '{"id":1,"cmd":"focus","args":{"pane":"doc"}}' >/dev/null; sleep 1
+pinched="$(mdpinch true)"; zoomed "$pinched" || fail "a pinch should zoom the focused markdown pane: $pinched"
+sleep 1
+key "cmd+0"; key "cmd+="
+[[ "$(mdzoom)" == 1.1 ]] || fail "⌘= should magnify the focused markdown pane: $(mdzoom)"
+for _ in 1 2 3 4 5 6; do key "cmd+-"; done
+[[ "$(mdzoom)" == 0.5 ]] || fail "⌘− should step down to 50%: $(mdzoom)"
+raw '{"id":1,"cmd":"focus","args":{"pane":"mdterm"}}' >/dev/null; sleep 0.3
+raw '{"id":1,"cmd":"debug.click","args":{"pane":"doc","at":[4,200]}}' >/dev/null; sleep 0.3
+[[ "$(mdfocused)" == doc ]] || fail "clicking beside a magnified-out page should focus its pane: $(mdfocused)"
+key "cmd+0"
 missing="$("$cli" open md "$out/docs/nope.md" --window "$mdw" 2>&1)" && fail "a missing file should fail"
 [[ "$missing" == *"No such file"* ]] || fail "a missing file should say so: $missing"
 folder="$("$cli" open md "$out/docs" --window "$mdw" 2>&1)" && fail "a folder should fail"
