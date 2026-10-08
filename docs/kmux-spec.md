@@ -341,13 +341,15 @@ $ kmux instances
 | Pane commands | A `term` pane's `cmd` is a shell command line, run by the user's login shell. |
 | Process model | kmux is a single app that runs its own terminals and listens on the control socket itself. Later, we fork our own mux and move to a kanna-v3-style app-plus-daemon. |
 | Reuse | Copy the kanna-v3 pieces kmux needs and trim them, without depending on v3. |
+| Other projects' code | We may learn how another project (for example cmux) does something, but **clean-room only**: a separate subagent reads their code and reports the behaviour in plain words, so the agent implementing kmux never has their code in its context. Code we use directly must have a compatible license and is credited in `NOTICE.md`. |
+| License | kmux is **MIT** (`LICENSE`). kanna is FSL-1.1-MIT. |
 | kanna CLI | Rust. |
 | kmux CLI | Rust, sharing the socket client with kanna (`crates/kmux-client`). Commands, help and parsing come from one table. Checked by having a fresh agent use it cold. |
 | Repos | kmux (app, CLI, model, spec) and kanna are separate repos. kanna depends on kmux's `kmux-client` crate. |
 | Instances | Several at once, one socket each ([3.4](#34-instances)). |
 | Events | **None for now.** Clients that need to notice changes poll `list`. Events would let a client react straight away (a server pane exited, a command sent with `send` finished, a page moved) and can be added later. |
 | Pane identity | No pane names on hover. Panes stay chromeless; `kmux list` shows names. |
-| Persistence | None. Windows and layouts don't survive a restart. |
+| Persistence | **Layouts come back after kmux restarts**: windows, tabs, splits and sizes, pane names, and what each pane shows. kmux owns its terminals, so they come back as **new** terminals, started again in their working directory with their command; their output and processes are gone. Web panes reload their URL and iOS panes relaunch their app. Keeping processes alive across app or machine restarts is kanna's job, not kmux's. Not built yet. |
 | Web navigation | Back/forward history is **off by default** and turned on per pane with `history` (`--history` in the CLI). There are no history shortcuts, because ⌘[ and ⌘] move between panes. |
 | Performance | Measured by the benchmark utility, `kmux-bench` ([8.3](#83-performance)). |
 | Background | kmux launches in front; `--bg` keeps it behind the user's windows, for tests ([3.5](#35-staying-in-the-background)). |

@@ -29,3 +29,7 @@ can start kmux with `--bg` (app or CLI, or `KMUX_BG=1`) to keep it behind your o
 iOS panes need Xcode with an iOS simulator runtime:
 `kmux open ios --app build/MyApp.app --device "iPhone 16"` (or a bundle ID
 such as `com.apple.Preferences`).
+
+## License
+
+MIT. See [LICENSE](LICENSE).

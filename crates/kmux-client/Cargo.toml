@@ -2,6 +2,7 @@
 name = "kmux-client"
 version.workspace = true
 edition.workspace = true
+license = "MIT"
 description = "Client for the kmux control socket, used by the kmux CLI and by kanna."
 
 [dependencies]
