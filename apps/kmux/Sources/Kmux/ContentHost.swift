@@ -14,6 +14,8 @@ final class ContentHost: PaneHost {
     var onFocus: ((String) -> Void)?
     var onCloseRequest: ((String) -> Void)?
     var onNavigate: ((String, String) -> Void)?
+    /// The pane's ⋯ grip was pressed: a drag to move the pane begins.
+    var onPaneDrag: ((String, NSEvent) -> Void)?
 
     init(runtime: GhosttyRuntime) {
         self.runtime = runtime
@@ -51,7 +53,9 @@ final class ContentHost: PaneHost {
             started = runtime.attach(terminal, command: pane.command, cwd: pane.cwd, environment: environment)
             content = terminal
         }
-        views[id] = PaneView(id: id, content: content)
+        let view = PaneView(id: id, content: content)
+        view.grip.onDrag = { [weak self] event in self?.onPaneDrag?(id, event) }
+        views[id] = view
         DispatchQueue.main.async { [weak self] in
             if started { self?.core?.update(id, state: .running) } else { self?.core?.update(id, state: .failed, error: "Ghostty could not create a terminal") }
         }

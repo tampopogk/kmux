@@ -50,7 +50,11 @@ final class WindowController: NSObject, NSWindowDelegate {
         tabBar.show(model, state)
         let shown = Set(Model.paneIDs(state.zoomed.map { Node.pane($0) } ?? tab.root))
         for case let view as PaneView in stage.subviews where !shown.contains(view.id) { view.removeFromSuperview() }
+        dividers.forEach { $0.removeFromSuperview() }
+        dividers = []
         place(state.zoomed.map { Node.pane($0) } ?? tab.root, in: stage.bounds, host)
+        dividers.forEach { stage.addSubview($0) }
+        window.invalidateCursorRects(for: stage)
         for id in shown {
             guard let view = host.views[id], let pane = model.panes[id] else { continue }
             view.show(pane)
@@ -65,6 +69,9 @@ final class WindowController: NSObject, NSWindowDelegate {
         }
     }
 
+    /// The handles over the dividers of the tab on screen, rebuilt by each render.
+    private(set) var dividers: [DividerView] = []
+
     private func place(_ node: Node?, in rect: NSRect, _ host: ContentHost) {
         switch node {
         case nil: return
@@ -77,12 +84,22 @@ final class WindowController: NSObject, NSWindowDelegate {
             let horizontal = split.axis == .row
             let total = (horizontal ? rect.width : rect.height) - Self.divider * CGFloat(split.kids.count - 1)
             var offset: CGFloat = 0
-            for kid in split.kids {
+            var previous: NSRect?
+            for (index, kid) in split.kids.enumerated() {
                 let length = (total * kid.size).rounded()
                 let frame = horizontal
                     ? NSRect(x: rect.minX + offset, y: rect.minY, width: length, height: rect.height)
                     : NSRect(x: rect.minX, y: rect.maxY - offset - length, width: rect.width, height: length)
                 place(kid.node, in: frame, host)
+                if let previous {
+                    let line = horizontal
+                        ? NSRect(x: previous.maxX, y: rect.minY, width: Self.divider, height: rect.height)
+                        : NSRect(x: rect.minX, y: previous.minY - Self.divider, width: rect.width, height: Self.divider)
+                    let handle = DividerView(split: split, index: index - 1, line: line, first: previous, second: frame)
+                    handle.onChange = { [weak self] in self?.relayout?() }
+                    dividers.append(handle)
+                }
+                previous = frame
                 offset += length + Self.divider
             }
         }

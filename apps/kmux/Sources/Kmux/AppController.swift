@@ -31,6 +31,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         host.instance = instance
         host.onFocus = { [weak self] id in self?.focused(id) }
         host.onNavigate = { [weak self] id, url in self?.request(["cmd": "navigate", "args": ["pane": .string(id), "url": .string(url)]]) }
+        host.onPaneDrag = { [weak self] id, _ in self?.dragPane(id) }
         host.onCloseRequest = { [weak self] id in self?.request(["cmd": "close", "args": ["pane": .string(id)]]) }
         core.host = host
         core.onChange = { [weak self] in self?.sync() }
@@ -41,6 +42,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         core.extraCommands["debug.snapshot"] = { [weak self] args in try self?.snapshot(args) ?? [:] }
         core.extraCommands["debug.key"] = { [weak self] args in try self?.pressKey(args) ?? [:] }
         core.extraCommands["debug.click"] = { [weak self] args in try self?.click(args) ?? [:] }
+        core.extraCommands["debug.drag"] = { [weak self] args in try await self?.debugDrag(args) ?? [:] }
         core.extraCommands["debug.web"] = { [weak self] args in
             guard let self, let web = try host.web(core.needPane(args["pane"]?.string).id) else { throw KmuxError("wrong_type", "not a web pane") }
             let text = try? await web.webView.evaluateJavaScript("document.body ? document.body.innerText : ''") as? String
@@ -120,6 +122,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         controller.tabBar.onSelect = { [weak self] tab in self?.request(["cmd": "focus", "args": ["tab": .string(tab)]]) }
         controller.tabBar.onClose = { [weak self] tab in self?.request(["cmd": "close", "args": ["tab": .string(tab)]]) }
         controller.tabBar.onNew = { [weak self] in self?.newTab(in: id) }
+        controller.tabBar.onDrag = { [weak self] tab in self?.dragTab(tab) }
         controller.tabBar.onEditEnded = { [weak self, weak controller] in
             guard let self, let controller else { return }
             controller.render(core.model, host)
@@ -280,6 +283,202 @@ final class AppController: NSObject, NSApplicationDelegate {
         return true
     }
 
+    // MARK: Dragging (reference/kmux/index.html: startPaneDrag, startTabDrag)
+
+    private enum Drop {
+        case pane(String, side: String) // dock beside a pane, or swap with it
+        case tab(String) // a pane into another tab
+        case newTab(window: String) // a pane into a new tab (the + button)
+        case index(window: String, Int) // a tab to a place in a tab bar
+        case newWindow(NSPoint) // anything, outside every kmux window
+    }
+
+    /// The kmux window at `point` (screen coordinates), beneath the drop hint.
+    private func controller(at point: NSPoint, below hint: DropHint) -> WindowController? {
+        // The hint ignores the mouse, so the search normally skips it already.
+        var number = NSWindow.windowNumber(at: point, belowWindowWithWindowNumber: 0)
+        if number == hint.windowNumber { number = NSWindow.windowNumber(at: point, belowWindowWithWindowNumber: number) }
+        return controllers.values.first { $0.window.windowNumber == number }
+    }
+
+    /// Where a window torn off at `point` goes: its title bar under the mouse.
+    private func newWindowFrame(at point: NSPoint, size: NSSize) -> NSRect {
+        NSRect(x: point.x - 40, y: point.y - size.height + 12, width: size.width, height: size.height)
+    }
+
+    /// What dropping pane `id` at `point` would do, shown by `hint`: onto
+    /// another pane's edge docks beside it, its middle swaps; onto a tab moves
+    /// it there, onto + into a new tab; outside kmux into a new window.
+    private func paneDrop(_ id: String, at point: NSPoint, hint: DropHint, size: NSSize) -> Drop? {
+        guard let controller = controller(at: point, below: hint) else {
+            hint.show(newWindowFrame(at: point, size: size), text: "new window", rounded: true)
+            return .newWindow(point)
+        }
+        let window = controller.window, inWindow = window.convertPoint(fromScreen: point)
+        let bar = controller.tabBar, inBar = bar.convert(inWindow, from: nil)
+        if bar.bounds.contains(inBar) {
+            let home = core.model.windows.flatMap(\.tabs).first { Model.paneIDs($0.root).contains(id) }?.id
+            guard let (tab, frame) = bar.target(at: inBar), tab != home else {
+                hint.hide()
+                return nil
+            }
+            hint.show(window.convertToScreen(bar.convert(frame, to: nil)), text: tab == nil ? "+" : "")
+            return tab.map(Drop.tab) ?? .newTab(window: controller.id)
+        }
+        for view in host.views.values where view.window === window && view.superview != nil && view.id != id {
+            let p = view.convert(inWindow, from: nil), b = view.bounds
+            guard b.contains(p) else { continue }
+            let fx = p.x / b.width, fy = 1 - p.y / b.height
+            var side = "swap"
+            if !(fx > 0.3 && fx < 0.7 && fy > 0.3 && fy < 0.7) {
+                side = [("left", fx), ("right", 1 - fx), ("top", fy), ("bottom", 1 - fy)].min { $0.1 < $1.1 }!.0
+            }
+            let area = switch side {
+            case "left": NSRect(x: 0, y: 0, width: b.width / 2, height: b.height)
+            case "right": NSRect(x: b.width / 2, y: 0, width: b.width / 2, height: b.height)
+            case "top": NSRect(x: 0, y: b.height / 2, width: b.width, height: b.height / 2)
+            case "bottom": NSRect(x: 0, y: 0, width: b.width, height: b.height / 2)
+            default: b
+            }
+            hint.show(window.convertToScreen(view.convert(area, to: nil)), text: side == "swap" ? "swap" : "")
+            return .pane(view.id, side: side)
+        }
+        hint.hide()
+        return nil
+    }
+
+    /// What dropping tab `id` at `point` would do: into a tab bar at the gap
+    /// nearest the mouse, or outside kmux into a new window.
+    private func tabDrop(at point: NSPoint, hint: DropHint, size: NSSize) -> Drop? {
+        guard let controller = controller(at: point, below: hint) else {
+            hint.show(newWindowFrame(at: point, size: size), text: "new window", rounded: true)
+            return .newWindow(point)
+        }
+        let bar = controller.tabBar, inBar = bar.convert(controller.window.convertPoint(fromScreen: point), from: nil)
+        guard bar.bounds.contains(inBar) else {
+            hint.hide()
+            return nil
+        }
+        let (index, x) = bar.insertion(at: inBar.x)
+        hint.show(controller.window.convertToScreen(bar.convert(NSRect(x: x - 1, y: 4, width: 3, height: TabBar.height - 8), to: nil)))
+        return .index(window: controller.id, index)
+    }
+
+    @discardableResult
+    private func dragPane(_ id: String) -> Task<Void, Never>? {
+        guard let size = host.views[id]?.window?.frame.size else { return nil }
+        let hint = DropHint()
+        let end = trackMouse { _ = paneDrop(id, at: $0, hint: hint, size: size) }
+        let drop = paneDrop(id, at: end, hint: hint, size: size)
+        hint.hide()
+        var args: [String: JSON] = ["pane": .string(id)]
+        switch drop {
+        case .pane(let to, let side): args["to"] = .string(to); args["side"] = .string(side)
+        case .tab(let tab): args["tab"] = .string(tab)
+        case .newTab(let window): args["tab"] = "new"; args["window"] = .string(window)
+        case .newWindow: args["window"] = "new"
+        case .index, nil: return nil
+        }
+        return perform(["cmd": "move", "args": .object(args)], tornOff: drop, size: size)
+    }
+
+    @discardableResult
+    private func dragTab(_ id: String) -> Task<Void, Never>? {
+        guard let window = core.model.windows.first(where: { $0.tabs.contains { $0.id == id } }), let size = controllers[window.id]?.window.frame.size else { return nil }
+        let hint = DropHint()
+        let end = trackMouse { _ = tabDrop(at: $0, hint: hint, size: size) }
+        let drop = tabDrop(at: end, hint: hint, size: size)
+        hint.hide()
+        switch drop {
+        case .index(let window, let index):
+            return perform(["cmd": "move-tab", "args": ["tab": .string(id), "window": .string(window), "index": .number(Double(index))]], tornOff: nil, size: size)
+        case .newWindow:
+            return perform(["cmd": "move-tab", "args": ["tab": .string(id), "window": "new"]], tornOff: drop, size: size)
+        default: return nil
+        }
+    }
+
+    /// Sends a drag's request; a new window opens where the drag ended.
+    private func perform(_ request: JSON, tornOff drop: Drop?, size: NSSize) -> Task<Void, Never> {
+        Task { @MainActor in
+            let reply = await core.handle(request)
+            guard reply["ok"] == true else { return NSLog("kmux: \(String(decoding: reply.encoded(), as: UTF8.self))") }
+            if case .newWindow(let point)? = drop, let id = reply["window"]?.string, let controller = controllers[id] {
+                controller.window.setFrame(newWindowFrame(at: point, size: size), display: true)
+            }
+        }
+    }
+
+    /// Replays a drag along scripted mouse positions (for tests):
+    /// `{pane: P, to: TARGET}`, `{tab: T, to: TARGET}` or `{divider: P, at: FRACTION}`
+    /// (the divider after pane P, moved to that fraction of the pair). TARGET is
+    /// `{pane: P, x, y}` (fractions from the top left), `{tab: T}`, `{plus: WINDOW}`
+    /// or `{outside: true}` (beyond every kmux window).
+    private func debugDrag(_ args: JSON) async throws -> [String: JSON] {
+        func post(_ points: [NSPoint]) { scriptedDrag = points }
+        func screen(_ view: NSView, _ point: NSPoint) throws -> NSPoint {
+            guard let window = view.window else { throw KmuxError("not_found", "not on screen") }
+            return window.convertPoint(toScreen: view.convert(point, to: nil))
+        }
+        // Other apps' windows may cover kmux's while tests run (and an inactive
+        // app can't come to the front), so float above them for the drag.
+        let windows = controllers.values.map(\.window)
+        windows.forEach {
+            $0.level = .popUpMenu
+            $0.orderFrontRegardless()
+        }
+        DropHint.level = .screenSaver
+        defer {
+            windows.forEach { $0.level = .normal }
+            DropHint.level = .floating
+        }
+        if let ref = args["divider"]?.string {
+            let pane = try core.needPane(ref)
+            guard let (controller, handle) = controllers.values.lazy.compactMap({ c in
+                c.dividers.first { if case .pane(pane.id) = $0.split.kids[$0.index].node { true } else { false } }.map { (c, $0) }
+            }).first, let stage = handle.superview else { throw KmuxError("not_found", "no divider after \(pane.id)") }
+            let to = try screen(stage, handle.position(CGFloat(args["at"]?.number ?? 0.5)))
+            post([to, to])
+            handle.drag(in: stage)
+            controller.render(core.model, host)
+            return [:]
+        }
+        let to: NSPoint
+        let target = args["to"] ?? [:]
+        if let ref = target["pane"]?.string {
+            guard let view = host.views[try core.needPane(ref).id] else { throw KmuxError("not_found", "no pane \(ref)") }
+            let b = view.bounds
+            to = try screen(view, NSPoint(x: b.width * CGFloat(target["x"]?.number ?? 0.5), y: b.height * (1 - CGFloat(target["y"]?.number ?? 0.5))))
+        } else if let tab = target["tab"]?.string ?? target["plus"]?.string {
+            guard let controller = controllers.values.first(where: { target["plus"] != nil ? $0.id == tab : $0.tabBar.center(of: tab) != nil }) else { throw KmuxError("not_found", "no tab bar for \(tab)") }
+            let point = target["plus"] != nil ? controller.tabBar.plusCenter : controller.tabBar.convert(controller.tabBar.center(of: tab)!, from: nil)
+            to = try screen(controller.tabBar, point)
+        } else {
+            let screenFrame = NSScreen.main?.visibleFrame ?? .zero
+            let corners = [NSPoint(x: screenFrame.maxX - 30, y: screenFrame.minY + 30), NSPoint(x: screenFrame.minX + 30, y: screenFrame.minY + 30),
+                           NSPoint(x: screenFrame.maxX - 30, y: screenFrame.maxY - 30), NSPoint(x: screenFrame.minX + 30, y: screenFrame.maxY - 30)]
+            guard let free = corners.first(where: { p in !controllers.values.contains { $0.window.frame.contains(p) } }) else {
+                throw KmuxError("bad_request", "every corner of the screen is covered by a kmux window")
+            }
+            to = free
+        }
+        try await Task.sleep(for: .milliseconds(150)) // let the window server catch up
+        post([to, to])
+        let task: Task<Void, Never>?
+        if let ref = args["pane"]?.string {
+            task = dragPane(try core.needPane(ref).id)
+        } else if let tab = args["tab"]?.string {
+            task = dragTab(tab)
+        } else {
+            throw KmuxError("bad_request", "debug.drag needs pane, tab or divider")
+        }
+        await task?.value
+        let under = NSWindow.windowNumber(at: to, belowWindowWithWindowNumber: 0)
+        let owner = (CGWindowListCopyWindowInfo([.optionIncludingWindow], CGWindowID(under)) as? [[String: Any]])?.first?[kCGWindowOwnerName as String] as? String
+        let window = controllers.values.first { $0.window.windowNumber == under }?.id
+        return ["dropped": .bool(task != nil), "at": [.number(to.x), .number(to.y)], "under": .string(window ?? owner ?? "\(under)")]
+    }
+
     private func snapshot(_ args: JSON) throws -> [String: JSON] {
         let window = try core.targetWindow(args["window"])
         guard let controller = controllers[window.id] else { throw KmuxError("not_found", "no window \"\(window.id)\"") }
@@ -361,11 +560,14 @@ final class AppController: NSObject, NSApplicationDelegate {
               let point = controller.tabBar.center(of: id) else { throw KmuxError("not_found", "no tab \"\(id)\" on screen") }
         let window = controller.window
         for count in 1...max(1, Int(args["clicks"]?.number ?? 1)) {
-            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-                guard let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
-                                                     windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: count, pressure: 1) else { continue }
-                NSApp.sendEvent(event)
+            func event(_ type: NSEvent.EventType) -> NSEvent? {
+                NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                   windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: count, pressure: 1)
             }
+            // Queue the mouse-up first: a tab waits for it to tell a click from a drag.
+            guard let down = event(.leftMouseDown), let up = event(.leftMouseUp) else { continue }
+            NSApp.postEvent(up, atStart: false)
+            NSApp.sendEvent(down)
         }
         return [:]
     }

@@ -34,7 +34,7 @@ PY
 }
 raw() { # one control-protocol request, printed as JSON
   python3 -c 'import json, socket, sys
-s = socket.socket(socket.AF_UNIX); s.connect(sys.argv[1])
+s = socket.socket(socket.AF_UNIX); s.settimeout(30); s.connect(sys.argv[1])
 s.sendall(sys.argv[2].encode() + b"\n"); print(s.makefile().readline().strip())' "$KMUX_SOCKET" "$1"
 }
 field() { python3 -c 'import json, sys; v = json.load(sys.stdin)
@@ -135,7 +135,41 @@ key "cmd+w"; [[ "$(field windows.0.tabs <<<"$(state)" | python3 -c 'import json,
 key "cmd+shift+w"
 [[ "$(field windows <<<"$(state)" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')" == 1 ]] || fail "cmd+shift+w should close the window"
 
-# 7. Instances: a second kmux beside this one, with its own socket and
+# 7. Dragging: dividers snap, the ⋯ grip moves panes, tabs reorder and tear off.
+drag() { raw "{\"id\":1,\"cmd\":\"debug.drag\",\"args\":$1}" >/dev/null; sleep 0.3; }
+win() { # win ID FIELD: a field of one window in `kmux list --json`
+  "$cli" list --json | python3 -c 'import json, sys
+w = next(w for w in json.load(sys.stdin)["windows"] if w["id"] == sys.argv[1])
+v = w
+for k in sys.argv[2].split("."): v = v[int(k)] if k.isdigit() else v[k]
+print(json.dumps(v, sort_keys=True))' "$1" "$2"
+}
+count_windows() { "$cli" list --json | python3 -c 'import json, sys; print(len(json.load(sys.stdin)["windows"]))'; }
+dw="$(field window <<<"$("$cli" open --window new --name da --json)")"
+"$cli" open --window "$dw" --name db --split right >/dev/null
+drag '{"divider":"da","at":0.26}'
+[[ "$(win "$dw" tabs.0.layout)" == '{"children": [{"pane": "da", "size": "1/4"}, {"pane": "db", "size": "3/4"}], "split": "row"}' ]] \
+  || fail "divider drag should snap to 1/4: $(win "$dw" tabs.0.layout)"
+drag '{"pane":"da","to":{"pane":"db","x":0.5,"y":0.95}}'
+[[ "$(win "$dw" tabs.0.layout)" == '{"children": [{"pane": "db", "size": "1/2"}, {"pane": "da", "size": "1/2"}], "split": "column"}' ]] \
+  || fail "dropping on the bottom edge should dock below: $(win "$dw" tabs.0.layout)"
+drag '{"pane":"da","to":{"pane":"db","x":0.5,"y":0.5}}'
+[[ "$(win "$dw" tabs.0.layout)" == '{"children": [{"pane": "da", "size": "1/2"}, {"pane": "db", "size": "1/2"}], "split": "column"}' ]] \
+  || fail "dropping in the middle should swap: $(win "$dw" tabs.0.layout)"
+drag "{\"pane\":\"da\",\"to\":{\"plus\":\"$dw\"}}"
+[[ "$(win "$dw" tabs.1.layout)" == '{"pane": "da"}' ]] || fail "dropping on + should open a new tab: $(win "$dw" tabs)"
+first="$(win "$dw" tabs.0.id | tr -d '"')"; second="$(win "$dw" tabs.1.id | tr -d '"')"
+drag "{\"tab\":\"$second\",\"to\":{\"tab\":\"$first\"}}"
+[[ "$(win "$dw" tabs.0.id | tr -d '"')" == "$second" ]] || fail "dragging a tab before another should reorder: $(win "$dw" tabs)"
+before="$(count_windows)"
+drag "{\"tab\":\"$second\",\"to\":{\"outside\":true}}"
+[[ "$(count_windows)" == $((before + 1)) ]] || fail "dragging a tab outside kmux should open a window"
+drag '{"pane":"db","to":{"outside":true}}'
+[[ "$(count_windows)" == $((before + 1)) ]] || fail "the last pane leaving its window should move the window, not add one"
+sleep 0.5
+drawn dragged "*"
+
+# 8. Instances: a second kmux beside this one, with its own socket and
 # windows. kmux run inside one of its panes controls that instance.
 other="e2e$$"
 other_socket="$HOME/Library/Application Support/kmux/kmux-$other.sock"

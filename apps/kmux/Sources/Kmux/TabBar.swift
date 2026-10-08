@@ -12,6 +12,8 @@ final class TabBar: NSView {
     var onNew: (() -> Void)?
     var onRename: ((String, String) -> Void)?
     var onEditEnded: (() -> Void)?
+    /// A tab was dragged past the click threshold: a drag to move it begins.
+    var onDrag: ((String) -> Void)?
     private var shown: [(id: String, title: String, active: Bool)] = []
 
     override init(frame frameRect: NSRect) {
@@ -34,6 +36,7 @@ final class TabBar: NSView {
             item.onClose = { [weak self] in self?.onClose?(tab.id) }
             item.onRename = { [weak self] title in self?.onRename?(tab.id, title) }
             item.onEditEnded = { [weak self] in self?.onEditEnded?() }
+            item.onDrag = { [weak self] in self?.onDrag?(tab.id) }
             item.frame.origin = NSPoint(x: x, y: 0)
             addSubview(item)
             x += item.frame.width + 2
@@ -45,6 +48,27 @@ final class TabBar: NSView {
         plus.frame = NSRect(x: x + 4, y: 3, width: 22, height: 22)
         plus.toolTip = "New tab"
         addSubview(plus)
+        self.plus = plus
+    }
+
+    private weak var plus: NSButton?
+    /// The middle of +, in bar coordinates (for debug.drag).
+    var plusCenter: NSPoint { plus.map { NSPoint(x: $0.frame.midX, y: $0.frame.midY) } ?? .zero }
+    private var items: [TabItem] { subviews.compactMap { $0 as? TabItem } }
+
+    /// What is under `point` (bar coordinates) when dropping a pane: a tab or +, with its frame.
+    func target(at point: NSPoint) -> (tab: String?, frame: NSRect)? {
+        if let item = items.first(where: { $0.frame.contains(point) }) { return (item.id, item.frame) }
+        if let plus, plus.frame.insetBy(dx: -4, dy: -3).contains(point) { return (nil, plus.frame) }
+        return nil
+    }
+
+    /// Where a dropped tab goes: the index of the first tab whose middle is
+    /// right of `x`, and the x of the gap it goes into (bar coordinates).
+    func insertion(at x: CGFloat) -> (index: Int, x: CGFloat) {
+        let items = items
+        if let i = items.firstIndex(where: { x < $0.frame.midX }) { return (i, items[i].frame.minX - 1) }
+        return (items.count, (items.last?.frame.maxX ?? 8) + 1)
     }
 
     /// Where a tab is drawn, in window coordinates (for debug.click).
@@ -68,6 +92,7 @@ private final class TabItem: NSView, NSTextFieldDelegate {
     var onClose: (() -> Void)?
     var onRename: ((String) -> Void)?
     var onEditEnded: (() -> Void)?
+    var onDrag: (() -> Void)?
     private let active: Bool
     private let label: NSTextField
     private var editor: NSTextField?
@@ -103,7 +128,21 @@ private final class TabItem: NSView, NSTextFieldDelegate {
     }
 
     override func mouseDown(with event: NSEvent) {
-        if event.clickCount == 2 { startEditing() } else { onSelect?() }
+        if event.clickCount == 2 { return startEditing() }
+        // A click selects; moving 5 points first starts a drag instead.
+        let origin = screenPoint(event)
+        while let next = NSApp.nextEvent(matching: [.leftMouseDragged, .leftMouseUp], until: .distantFuture, inMode: .eventTracking, dequeue: true) {
+            if next.type == .leftMouseUp { break }
+            let point = screenPoint(next)
+            if hypot(point.x - origin.x, point.y - origin.y) >= 5 { return drag() }
+        }
+        onSelect?()
+    }
+
+    private func drag() {
+        alphaValue = 0.5
+        onDrag?()
+        alphaValue = 1
     }
 
     // Renaming: double-click; Enter or clicking away saves, Escape cancels.
