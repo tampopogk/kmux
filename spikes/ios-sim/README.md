@@ -19,6 +19,9 @@ once Swift-only properties are wired up. The framebuffer route above is what
 Facebook's idb uses, and the protocols involved (`SimDisplayIOSurfaceRenderable`,
 `SimDisplayRenderable`) are stable across recent Xcodes.
 
+| Home button | `IndigoHIDMessageForButton(0, 1 down / 2 up, 0x33)` (three ints; values as in idb). ⇧⌘H in the spike, as in Simulator.app. Works. |
+| Swipes from an edge | The last argument of the mouse message is an edge. A bottom swipe with edge 2 switched apps once; with other values it was an ordinary drag. Going home by swiping up doesn't work yet: Simulator.app sends edge gestures through its digitizer input view, which this spike doesn't use. Use ⇧⌘H. |
+
 ## Measurements
 
 | What | Result |

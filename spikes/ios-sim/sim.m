@@ -19,9 +19,14 @@ static NSString *const kCoreSimulator = @"/Library/Developer/PrivateFrameworks/C
 // read from the disassembly: ints in x0–x4, the size in d0/d1.
 typedef void *(*IndigoMouseFn)(CGPoint *point, CGPoint *point2, uint32_t target, NSEventType type, NSSize size, uint32_t edge);
 static IndigoMouseFn IndigoMouse;
+// IndigoHIDMessageForButton(button, direction, target): three ints, from the disassembly.
+// Values as in Facebook's idb: Home is button 0, down 1 / up 2, buttons go to target 0x33.
+typedef void *(*IndigoButtonFn)(uint32_t button, uint32_t direction, uint32_t target);
+static IndigoButtonFn IndigoButton;
 static uint32_t gTarget = 0x32; // the touch screen
 static double gT0;
-static double gTouchSent; // a touch waiting for the screen to change
+static double gTouchSent;
+static long gEdgeOverride = -1; // --edge N: try another IndigoHIDEdge value // a touch waiting for the screen to change
 
 static double now(void) { return [NSDate timeIntervalSinceReferenceDate]; }
 static void say(NSString *format, ...) {
@@ -48,19 +53,42 @@ static id device(NSString *udid) {
 @interface TouchView : NSView
 @property(strong) id hid;
 @property NSSize screen; // device screen in points, for the message
+@property uint32_t edge; // the screen edge a gesture started at (IndigoHIDEdge), for system swipes
 @end
 
 @implementation TouchView
 - (BOOL)acceptsFirstMouse:(NSEvent *)event { return YES; }
+- (BOOL)acceptsFirstResponder { return YES; }
+- (void)deliver:(void *)message label:(NSString *)label {
+    ((void (*)(id, SEL, void *, BOOL, id, id))objc_msgSend)(self.hid, NSSelectorFromString(@"sendWithMessage:freeWhenDone:completionQueue:completion:"),
+        message, YES, dispatch_get_main_queue(), ^(NSError *error) { say(@"%@ %@", label, error ?: @"ok"); });
+}
+/// The Home button: press and release.
+- (void)home {
+    [self deliver:IndigoButton(0, 1, 0x33) label:@"home down"];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 60 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{ [self deliver:IndigoButton(0, 2, 0x33) label:@"home up"]; });
+}
+- (BOOL)performKeyEquivalent:(NSEvent *)event {
+    // ⇧⌘H, as in Simulator.app.
+    if ((event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask) == (NSEventModifierFlagCommand | NSEventModifierFlagShift)
+        && [event.charactersIgnoringModifiers.lowercaseString isEqualToString:@"h"]) { [self home]; return YES; }
+    return [super performKeyEquivalent:event];
+}
 - (void)send:(NSEventType)type at:(NSPoint)ratio {
     CGPoint point = CGPointMake(ratio.x, ratio.y);
-    void *message = IndigoMouse(&point, NULL, gTarget, type, NSMakeSize(1, 1), 0);
+    if (type == NSEventTypeLeftMouseDown) {
+        // IndigoHIDEdge: 2 did something for a bottom swipe (switched apps); the rest is a guess.
+        const double inset = 0.03;
+        self.edge = ratio.y > 1 - inset ? 2 : ratio.y < inset ? 1 : ratio.x < inset ? 3 : ratio.x > 1 - inset ? 4 : 0;
+        if (gEdgeOverride >= 0 && self.edge) self.edge = (uint32_t)gEdgeOverride;
+    }
+    void *message = IndigoMouse(&point, NULL, gTarget, type, NSMakeSize(1, 1), self.edge);
     if (!message) { say(@"no message"); return; }
     double sent = now();
     if (type == NSEventTypeLeftMouseDown) gTouchSent = sent;
     ((void (*)(id, SEL, void *, BOOL, id, id))objc_msgSend)(self.hid, NSSelectorFromString(@"sendWithMessage:freeWhenDone:completionQueue:completion:"),
         message, YES, dispatch_get_main_queue(), ^(NSError *error) {
-            say(@"touch %lu at %.3f,%.3f %@ (%.1f ms)", (unsigned long)type, ratio.x, ratio.y, error ?: @"ok", (now() - sent) * 1000);
+            if (type != NSEventTypeLeftMouseDragged) say(@"touch %lu at %.3f,%.3f edge %u %@ (%.1f ms)", (unsigned long)type, ratio.x, ratio.y, self.edge, error ?: @"ok", (now() - sent) * 1000);
         });
 }
 - (NSPoint)ratio:(NSEvent *)event {
@@ -97,6 +125,8 @@ int main(int argc, const char **argv) {
         (void)args;
         if (!dlopen(kCoreSimulator.UTF8String, RTLD_NOW) || !dlopen(kSimulatorKit.UTF8String, RTLD_NOW)) { say(@"dlopen: %s", dlerror()); return 1; }
         IndigoMouse = (IndigoMouseFn)dlsym(RTLD_DEFAULT, "IndigoHIDMessageForMouseNSEvent");
+        IndigoButton = (IndigoButtonFn)dlsym(RTLD_DEFAULT, "IndigoHIDMessageForButton");
+        if (opts[@"edge"]) gEdgeOverride = [opts[@"edge"] integerValue];
         if (opts[@"target"]) gTarget = (uint32_t)strtoul([opts[@"target"] UTF8String], NULL, 0);
 
         id dev = device(opts[@"udid"]);
@@ -157,6 +187,7 @@ int main(int argc, const char **argv) {
         touch.hid = hid;
         [content addSubview:touch];
 
+        [window makeFirstResponder:touch];
         if (front) { [window makeKeyAndOrderFront:nil]; [app activateIgnoringOtherApps:YES]; } else { [window orderBack:nil]; }
 
         if (opts[@"tap"]) {
@@ -165,6 +196,22 @@ int main(int argc, const char **argv) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
                 [touch send:NSEventTypeLeftMouseDown at:p];
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 80 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{ [touch send:NSEventTypeLeftMouseUp at:p]; });
+            });
+        }
+        if (opts[@"home"]) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ [touch home]; });
+        }
+        if (opts[@"swipe"]) {
+            NSArray *v = [opts[@"swipe"] componentsSeparatedByString:@","];
+            NSPoint a = NSMakePoint([v[0] doubleValue], [v[1] doubleValue]), b = NSMakePoint([v[2] doubleValue], [v[3] doubleValue]);
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+                [touch send:NSEventTypeLeftMouseDown at:a];
+                for (int i = 1; i <= 20; i++) {
+                    NSPoint p = NSMakePoint(a.x + (b.x - a.x) * i / 20, a.y + (b.y - a.y) * i / 20);
+                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, i * 16 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+                        [touch send:i == 20 ? NSEventTypeLeftMouseUp : NSEventTypeLeftMouseDragged at:p];
+                    });
+                }
             });
         }
         if (opts[@"capture"]) {
