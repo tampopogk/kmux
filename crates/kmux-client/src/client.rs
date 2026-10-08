@@ -149,8 +149,8 @@ impl Kmux {
     }
 }
 
-/// Starts the instance in the background, as a new copy of the app (other
-/// instances may be running): `$KMUX_APP` if set, else the app by bundle ID.
+/// Starts the instance in the background (it doesn't come to the front), as
+/// a new copy of the app (other instances may be running): `$KMUX_APP` if set, else the app by bundle ID.
 fn launch(target: &Target) -> Result<(), Error> {
     let mut open = Command::new("/usr/bin/open");
     open.args(["-n", "-g"]);
@@ -161,7 +161,7 @@ fn launch(target: &Target) -> Result<(), Error> {
         Some(app) => open.arg("-a").arg(app),
         None => open.arg("-b").arg("dev.kanna.kmux"),
     };
-    open.args(["--args", "--instance", &target.instance]);
+    open.args(["--args", "--background", "--instance", &target.instance]);
     let status = open.status().map_err(|e| Error::Unreachable(format!("could not start kmux: {e}")))?;
     if status.success() {
         Ok(())

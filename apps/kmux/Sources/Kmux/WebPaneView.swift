@@ -146,6 +146,19 @@ final class WebPaneView: NSView, WKNavigationDelegate, NSTextFieldDelegate {
 /// Reports when the page takes the keyboard, so kmux can focus its pane.
 final class FocusReportingWebView: WKWebView {
     var onFocus: (() -> Void)?
+    /// kmux's pane menu, added below WebKit's own items on a right-click.
+    var contextMenu: (() -> NSMenu?)?
+
+    override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
+        super.willOpenMenu(menu, with: event)
+        window?.makeFirstResponder(self)
+        guard let extra = contextMenu?() else { return }
+        menu.addItem(.separator())
+        for item in extra.items {
+            extra.removeItem(item)
+            menu.addItem(item)
+        }
+    }
 
     override func becomeFirstResponder() -> Bool {
         let result = super.becomeFirstResponder()

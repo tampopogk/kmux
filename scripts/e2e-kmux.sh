@@ -11,7 +11,7 @@ export KMUX_SOCKET="/tmp/kmux-e2e-$$.sock"
 export KMUX_IGNORE_OCCLUSION=1 # render even if the window is covered
 cli="$repo_root/target/release/kmux"
 
-"$repo_root/target/kmux.app/Contents/MacOS/kmux" >"$out/kmux.log" 2>&1 &
+"$repo_root/target/kmux.app/Contents/MacOS/kmux" --background >"$out/kmux.log" 2>&1 &
 kmux_pid=$!
 trap 'kill $kmux_pid 2>/dev/null || true; rm -f "$KMUX_SOCKET"' EXIT
 
@@ -135,8 +135,15 @@ key "cmd+w"; [[ "$(field windows.0.tabs <<<"$(state)" | python3 -c 'import json,
 key "cmd+shift+w"
 [[ "$(field windows <<<"$(state)" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')" == 1 ]] || fail "cmd+shift+w should close the window"
 
+# Menus: every action in the spec's table (§5) has a menu item.
+menus="$(raw '{"id":1,"cmd":"debug.menu"}')"
+for item in "Split Right" "Split Down" "Open URL…" "Zoom" "Move Pane to New Window" "Restart" "Close Pane" "New Tab" \
+            "New Window" "Close Window" "Move Tab to New Window" "Next Window" "New Instance"; do
+  [[ "$menus" == *"\"item\": \"$item\""* || "$menus" == *"\"item\":\"$item\""* ]] || fail "no menu item \"$item\""
+done
+
 # 7. Dragging: dividers snap, the ⋯ grip moves panes, tabs reorder and tear off.
-drag() { raw "{\"id\":1,\"cmd\":\"debug.drag\",\"args\":$1}" >/dev/null; sleep 0.3; }
+drag() { last_drag="$1 → $(raw "{\"id\":1,\"cmd\":\"debug.drag\",\"args\":$1}")"; sleep 0.3; }
 win() { # win ID FIELD: a field of one window in `kmux list --json`
   "$cli" list --json | python3 -c 'import json, sys
 w = next(w for w in json.load(sys.stdin)["windows"] if w["id"] == sys.argv[1])
@@ -152,7 +159,7 @@ drag '{"divider":"da","at":0.26}'
   || fail "divider drag should snap to 1/4: $(win "$dw" tabs.0.layout)"
 drag '{"pane":"da","to":{"pane":"db","x":0.5,"y":0.95}}'
 [[ "$(win "$dw" tabs.0.layout)" == '{"children": [{"pane": "db", "size": "1/2"}, {"pane": "da", "size": "1/2"}], "split": "column"}' ]] \
-  || fail "dropping on the bottom edge should dock below: $(win "$dw" tabs.0.layout)"
+  || fail "dropping on the bottom edge should dock below: $(win "$dw" tabs.0.layout) ($last_drag)"
 drag '{"pane":"da","to":{"pane":"db","x":0.5,"y":0.5}}'
 [[ "$(win "$dw" tabs.0.layout)" == '{"children": [{"pane": "da", "size": "1/2"}, {"pane": "db", "size": "1/2"}], "split": "column"}' ]] \
   || fail "dropping in the middle should swap: $(win "$dw" tabs.0.layout)"
@@ -173,7 +180,7 @@ drawn dragged "*"
 # windows. kmux run inside one of its panes controls that instance.
 other="e2e$$"
 other_socket="$HOME/Library/Application Support/kmux/kmux-$other.sock"
-env -u KMUX_SOCKET "$repo_root/target/kmux.app/Contents/MacOS/kmux" --instance "$other" >"$out/kmux-$other.log" 2>&1 &
+env -u KMUX_SOCKET "$repo_root/target/kmux.app/Contents/MacOS/kmux" --background --instance "$other" >"$out/kmux-$other.log" 2>&1 &
 other_pid=$!
 trap 'kill $kmux_pid $server_pid $other_pid 2>/dev/null || true; rm -f "$KMUX_SOCKET"' EXIT
 for _ in $(seq 50); do [[ -S "$other_socket" ]] && break; sleep 0.1; done

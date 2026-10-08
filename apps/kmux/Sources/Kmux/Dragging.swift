@@ -38,6 +38,8 @@ final class DropHint {
 
     /// Above every window being dropped onto (tests raise both).
     static var level = NSWindow.Level.floating
+    /// Tests drag without showing anything.
+    static var quiet = false
 
     init() {
         panel = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
@@ -60,6 +62,7 @@ final class DropHint {
     var windowNumber: Int { panel.windowNumber }
 
     func show(_ rect: NSRect, text: String = "", rounded: Bool = false) {
+        guard !Self.quiet else { return }
         panel.setFrame(rect, display: false)
         box.layer?.cornerRadius = rounded ? 10 : 2
         label.stringValue = text

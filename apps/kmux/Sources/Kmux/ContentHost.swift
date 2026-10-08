@@ -16,6 +16,8 @@ final class ContentHost: PaneHost {
     var onNavigate: ((String, String) -> Void)?
     /// The pane's ⋯ grip was pressed: a drag to move the pane begins.
     var onPaneDrag: ((String, NSEvent) -> Void)?
+    /// The Pane menu, for right-clicks (acting on the pane, which takes focus first).
+    var contextMenu: (() -> NSMenu?)?
 
     init(runtime: GhosttyRuntime) {
         self.runtime = runtime
@@ -45,10 +47,12 @@ final class ContentHost: PaneHost {
             web.onFocus = { [weak self] in self?.onFocus?(id) }
             web.onNavigate = { [weak self] url in self?.onNavigate?(id, url) }
             web.onURLChange = { [weak self] url in self?.core?.model.panes[id]?.url = url }
+            web.webView.contextMenu = { [weak self] in self?.contextMenu?() }
             content = web
         default:
             let terminal = TerminalSurfaceView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
             terminal.onFocus = { [weak self] in self?.onFocus?(id) }
+            terminal.contextMenu = { [weak self] in self?.contextMenu?() }
             let environment = [("KMUX_INSTANCE", instance.name), ("KMUX_SOCKET", instance.socketPath), ("KMUX_PANE", id)]
             started = runtime.attach(terminal, command: pane.command, cwd: pane.cwd, environment: environment)
             content = terminal

@@ -7,6 +7,8 @@ import QuartzCore
 @MainActor
 final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
     var onFocus: (() -> Void)?
+    /// The menu for a right-click, unless the program in the terminal takes the mouse.
+    var contextMenu: (() -> NSMenu?)?
     var surface: ghostty_surface_t? { didSet { if surface != nil { syncSurfaceGeometry(); updateVisibility() } } }
     var isHandlingInputEvent = false
     /// Tests render hidden windows too (KMUX_IGNORE_OCCLUSION=1), so their
@@ -204,6 +206,9 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
     }
     override func rightMouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
+        if let surface, !ghostty_surface_mouse_captured(surface), let menu = contextMenu?() {
+            return NSMenu.popUpContextMenu(menu, with: event, for: self)
+        }
         mouseButton(event, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_RIGHT)
     }
     override func rightMouseUp(with event: NSEvent) { mouseButton(event, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_RIGHT) }

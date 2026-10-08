@@ -14,6 +14,7 @@ final class TabBar: NSView {
     var onEditEnded: (() -> Void)?
     /// A tab was dragged past the click threshold: a drag to move it begins.
     var onDrag: ((String) -> Void)?
+    var onMoveToNewWindow: ((String) -> Void)?
     private var shown: [(id: String, title: String, active: Bool)] = []
 
     override init(frame frameRect: NSRect) {
@@ -37,6 +38,7 @@ final class TabBar: NSView {
             item.onRename = { [weak self] title in self?.onRename?(tab.id, title) }
             item.onEditEnded = { [weak self] in self?.onEditEnded?() }
             item.onDrag = { [weak self] in self?.onDrag?(tab.id) }
+            item.onMoveToNewWindow = { [weak self] in self?.onMoveToNewWindow?(tab.id) }
             item.frame.origin = NSPoint(x: x, y: 0)
             addSubview(item)
             x += item.frame.width + 2
@@ -93,6 +95,7 @@ private final class TabItem: NSView, NSTextFieldDelegate {
     var onRename: ((String) -> Void)?
     var onEditEnded: (() -> Void)?
     var onDrag: (() -> Void)?
+    var onMoveToNewWindow: (() -> Void)?
     private let active: Bool
     private let label: NSTextField
     private var editor: NSTextField?
@@ -138,6 +141,15 @@ private final class TabItem: NSView, NSTextFieldDelegate {
         }
         onSelect?()
     }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let menu = NSMenu()
+        menu.addItem(withTitle: "Move Tab to New Window", action: #selector(moveToNewWindow), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Close Tab", action: #selector(closeClicked), keyEquivalent: "").target = self
+        return menu
+    }
+
+    @objc private func moveToNewWindow() { onMoveToNewWindow?() }
 
     private func drag() {
         alphaValue = 0.5

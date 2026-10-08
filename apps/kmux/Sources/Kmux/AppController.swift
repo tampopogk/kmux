@@ -11,6 +11,10 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var host: ContentHost!
     private var server: SocketServer?
     private var signalSources: [DispatchSourceSignal] = []
+    private var paneMenu: NSMenu?
+    private var testingDrag = false
+    /// Started by the CLI or a script (`--background`): don't take over the screen.
+    private let background = CommandLine.arguments.contains("--background") || ProcessInfo.processInfo.environment["KMUX_BACKGROUND"] == "1"
     private var controllers: [String: WindowController] = [:]
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -32,6 +36,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         host.onFocus = { [weak self] id in self?.focused(id) }
         host.onNavigate = { [weak self] id, url in self?.request(["cmd": "navigate", "args": ["pane": .string(id), "url": .string(url)]]) }
         host.onPaneDrag = { [weak self] id, _ in self?.dragPane(id) }
+        host.contextMenu = { [weak self] in self?.paneMenu?.copy() as? NSMenu }
         host.onCloseRequest = { [weak self] id in self?.request(["cmd": "close", "args": ["pane": .string(id)]]) }
         core.host = host
         core.onChange = { [weak self] in self?.sync() }
@@ -82,7 +87,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             signalSources.append(source)
         }
         installMenu()
-        NSApp.activate()
+        if !background { NSApp.activate() }
         if ProcessInfo.processInfo.environment["KMUX_NO_INITIAL_WINDOW"] == nil { newWindow() }
     }
 
@@ -108,7 +113,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             controller.render(core.model, host)
         }
         if let key = core.model.key, let controller = controllers[key], !controller.window.isKeyWindow {
-            controller.window.makeKeyAndOrderFront(nil)
+            present(controller.window)
         }
     }
 
@@ -123,6 +128,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         controller.tabBar.onClose = { [weak self] tab in self?.request(["cmd": "close", "args": ["tab": .string(tab)]]) }
         controller.tabBar.onNew = { [weak self] in self?.newTab(in: id) }
         controller.tabBar.onDrag = { [weak self] tab in self?.dragTab(tab) }
+        controller.tabBar.onMoveToNewWindow = { [weak self] tab in self?.request(["cmd": "move-tab", "args": ["tab": .string(tab), "window": "new"]]) }
         controller.tabBar.onEditEnded = { [weak self, weak controller] in
             guard let self, let controller else { return }
             controller.render(core.model, host)
@@ -137,7 +143,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             controller.render(core.model, host)
         }
         controllers[id] = controller
-        controller.window.makeKeyAndOrderFront(nil)
+        present(controller.window)
         return controller
     }
 
@@ -203,6 +209,16 @@ final class AppController: NSObject, NSApplicationDelegate {
     @objc func toggleZoom() {
         guard let pane = focusedPane else { return }
         request(["cmd": "zoom", "args": ["pane": .string(pane)]])
+    }
+
+    @objc func movePaneToNewWindow() {
+        guard let pane = focusedPane else { return }
+        request(["cmd": "move", "args": ["pane": .string(pane), "window": "new"]])
+    }
+
+    @objc func moveTabToNewWindow() {
+        guard let tab = keyWindow?.active else { return }
+        request(["cmd": "move-tab", "args": ["tab": .string(tab), "window": "new"]])
     }
 
     @objc func restartPane() {
@@ -283,6 +299,24 @@ final class AppController: NSObject, NSApplicationDelegate {
         return true
     }
 
+    /// Brings a window forward, unless kmux isn't the app in use: then the
+    /// window goes just behind the front window of the app that is, so a
+    /// script or agent driving kmux doesn't interrupt the user.
+    private func present(_ window: NSWindow) {
+        if NSApp.isActive {
+            return window.makeKeyAndOrderFront(nil)
+        }
+        window.makeKey()
+        let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        let front = windows.first { ($0[kCGWindowOwnerPID as String] as? pid_t) == pid && ($0[kCGWindowLayer as String] as? Int) == 0 }
+        if let number = front?[kCGWindowNumber as String] as? Int, pid != ProcessInfo.processInfo.processIdentifier {
+            window.order(.below, relativeTo: number)
+        } else {
+            window.orderFront(nil)
+        }
+    }
+
     // MARK: Dragging (reference/kmux/index.html: startPaneDrag, startTabDrag)
 
     private enum Drop {
@@ -295,6 +329,9 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     /// The kmux window at `point` (screen coordinates), beneath the drop hint.
     private func controller(at point: NSPoint, below hint: DropHint) -> WindowController? {
+        if testingDrag {
+            return NSApp.orderedWindows.lazy.compactMap { w in self.controllers.values.first { $0.window === w } }.first { $0.window.frame.contains(point) }
+        }
         // The hint ignores the mouse, so the search normally skips it already.
         var number = NSWindow.windowNumber(at: point, belowWindowWithWindowNumber: 0)
         if number == hint.windowNumber { number = NSWindow.windowNumber(at: point, belowWindowWithWindowNumber: number) }
@@ -420,18 +457,15 @@ final class AppController: NSObject, NSApplicationDelegate {
             guard let window = view.window else { throw KmuxError("not_found", "not on screen") }
             return window.convertPoint(toScreen: view.convert(point, to: nil))
         }
-        // Other apps' windows may cover kmux's while tests run (and an inactive
-        // app can't come to the front), so float above them for the drag.
-        let windows = controllers.values.map(\.window)
-        windows.forEach {
-            $0.level = .popUpMenu
-            $0.orderFrontRegardless()
-        }
-        DropHint.level = .screenSaver
+        // Look only at kmux's own windows, and show no hint: tests run while
+        // other apps cover kmux, and must not put windows in front of them.
+        testingDrag = true
+        DropHint.quiet = true
         defer {
-            windows.forEach { $0.level = .normal }
-            DropHint.level = .floating
+            testingDrag = false
+            DropHint.quiet = false
         }
+        try await Task.sleep(for: .milliseconds(50))
         if let ref = args["divider"]?.string {
             let pane = try core.needPane(ref)
             guard let (controller, handle) = controllers.values.lazy.compactMap({ c in
@@ -462,7 +496,6 @@ final class AppController: NSObject, NSApplicationDelegate {
             }
             to = free
         }
-        try await Task.sleep(for: .milliseconds(150)) // let the window server catch up
         post([to, to])
         let task: Task<Void, Never>?
         if let ref = args["pane"]?.string {
@@ -511,7 +544,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         if !instance.isDefault { app.insertItem(withTitle: "Instance: \(instance.name)", action: nil, keyEquivalent: "", at: 0) }
         app.addItem(.separator())
         app.addItem(withTitle: "Quit kmux", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        _ = menu("Pane", [
+        paneMenu = menu("Pane", [
             ("Split Right", #selector(splitRight), "new_split:right", .cmd("d")),
             ("Split Down", #selector(splitDown), "new_split:down", .shiftCmd("d")),
             ("New Web Pane Right", #selector(webRight), nil, nil),
@@ -521,6 +554,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             ("Next Pane", #selector(nextPane), "goto_split:next", .cmd("]")),
             ("Previous Pane", #selector(previousPane), "goto_split:previous", .cmd("[")),
             ("Zoom", #selector(toggleZoom), "toggle_split_zoom", .shiftCmd("\r")),
+            ("Move Pane to New Window", #selector(movePaneToNewWindow), nil, nil),
             nil,
             ("Restart", #selector(restartPane), nil, .cmd("r")),
             ("Close Pane", #selector(closePane), "close_surface", .cmd("w")),
@@ -533,6 +567,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         let windowMenu = menu("Window", [
             ("New Window", #selector(newWindow), "new_window", .cmd("n")),
             ("Close Window", #selector(closeWindow), "close_window", .shiftCmd("w")),
+            ("Move Tab to New Window", #selector(moveTabToNewWindow), nil, nil),
             nil,
             ("Next Window", #selector(nextWindow), nil, .cmd("`")),
             ("Previous Window", #selector(previousWindow), nil, .shiftCmd("`")),
