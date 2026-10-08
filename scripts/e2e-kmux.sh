@@ -215,6 +215,57 @@ dg="$(raw '{"id":1,"cmd":"debug.diagram","args":{"source":"flowchart LR\n  A[KMU
 [[ "$(field supported <<<"$(raw '{"id":1,"cmd":"debug.diagram","args":{"source":"pie\n \"a\": 1"}}')")" == False ]] || fail "pie isn't drawn yet"
 [[ "$(raw '{"id":1,"cmd":"debug.diagram","args":{"source":"flowchart LR\n  A -->"}}')" == *"Diagram error"* ]] || fail "invalid diagrams should say so"
 
+# 8c. Markdown panes: rendered natively (no web view), diagrams drawn,
+# live reload, navigate, zoom keys and a smooth pinch, a missing file.
+mkdir -p "$out/docs"
+cat > "$out/docs/spec.md" <<'MD'
+# KMUX MD OK
+
+Some **bold** text and a table:
+
+| a | b |
+|---|---|
+| 1 | 2 |
+
+```mermaid
+flowchart LR
+    A[cart] --> B[paid]
+```
+
+See [the other page](other.md).
+MD
+echo '# OTHER PAGE' > "$out/docs/other.md"
+mdw="$(field window <<<"$("$cli" open md "$out/docs/spec.md" --name doc --window new --json)")"
+md() { raw "{\"id\":1,\"cmd\":\"debug.md\",\"args\":{\"pane\":\"doc\"}}"; }
+mdtext() { field text <<<"$(md)"; }
+mdzoom() { field zoom <<<"$(md)"; }
+[[ "$(mdtext)" == *"KMUX MD OK"*"Some bold text"* ]] || fail "markdown pane did not render: $(mdtext)"
+[[ "$(mdtext)" != *"flowchart LR"* && "$(mdtext)" != *"**"* ]] || fail "markdown syntax and diagram source should not show: $(mdtext)"
+[[ "$(field diagrams.0.labels <<<"$(md)")" == *cart*paid* ]] || fail "the mermaid diagram should be drawn: $(md)"
+echo "Edited on disk" >> "$out/docs/spec.md"
+for _ in $(seq 20); do [[ "$(mdtext)" == *"Edited on disk"* ]] && break; sleep 0.25; done
+[[ "$(mdtext)" == *"Edited on disk"* ]] || fail "markdown pane should reload when the file changes"
+raw '{"id":1,"cmd":"debug.key","args":{"key":"cmd+="}}' >/dev/null
+raw '{"id":1,"cmd":"debug.key","args":{"key":"cmd+="}}' >/dev/null
+[[ "$(mdzoom)" == 1.25 ]] || fail "⌘= twice should zoom to 125%: $(mdzoom)"
+"$cli" navigate doc "$out/docs/other.md" >/dev/null
+[[ "$(mdtext)" == *"OTHER PAGE"* ]] || fail "navigate should show the other file: $(mdtext)"
+[[ "$(mdzoom)" == 1.25 ]] || fail "zoom should stay when the pane moves to another file: $(mdzoom)"
+raw '{"id":1,"cmd":"debug.key","args":{"key":"cmd+0"}}' >/dev/null
+[[ "$(mdzoom)" == 1 ]] || fail "⌘0 should go back to actual size: $(mdzoom)"
+pinch="$(raw '{"id":1,"cmd":"debug.pinch","args":{"pane":"doc","steps":[0.05,0.05,0.05,0.05]}}')"
+python3 - "$pinch" <<'PY' || fail "a pinch should zoom smoothly: $pinch"
+import json, sys
+zooms = json.loads(sys.argv[1])["zooms"]
+assert len(zooms) == 4 and all(b > a for a, b in zip([1] + zooms, zooms)), zooms
+assert abs(zooms[-1] - 1.05 ** 4) < 0.01, zooms  # follows the fingers, not the ⌘= steps
+PY
+missing="$("$cli" open md "$out/docs/nope.md" --window "$mdw" 2>&1)" && fail "a missing file should fail"
+[[ "$missing" == *"No such file"* ]] || fail "a missing file should say so: $missing"
+folder="$("$cli" open md "$out/docs" --window "$mdw" 2>&1)" && fail "a folder should fail"
+[[ "$folder" == *"is a folder"* ]] || fail "a folder should say so: $folder"
+"$cli" close --window "$mdw" >/dev/null
+
 # 9. iOS panes: the simulator's screen in a pane, with taps and Home.
 # Boots a simulator if none is (it stays booted). KMUX_E2E_IOS=0 skips this.
 if [[ "${KMUX_E2E_IOS:-1}" != 0 ]] && xcrun simctl list devices available 2>/dev/null | grep -q iPhone; then
