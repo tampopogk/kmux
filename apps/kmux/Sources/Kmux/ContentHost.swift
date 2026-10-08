@@ -1,8 +1,10 @@
 import AppKit
 import KmuxCore
+import KmuxMarkdown
 
-/// Runs pane contents: Ghostty terminals for `term` panes and web views for
-/// `web` panes, and reports their lifecycle to the core.
+/// Runs pane contents: Ghostty terminals for `term` panes, web views for
+/// `web` panes, native markdown views for `md` panes and the simulator for
+/// `ios` panes, and reports their lifecycle to the core.
 @MainActor
 final class ContentHost: PaneHost {
     let runtime: GhosttyRuntime
@@ -14,6 +16,10 @@ final class ContentHost: PaneHost {
     var onFocus: ((String) -> Void)?
     var onCloseRequest: ((String) -> Void)?
     var onNavigate: ((String, String) -> Void)?
+    /// A markdown pane followed a link to another markdown file.
+    var onOpenMarkdown: ((String, String) -> Void)?
+    /// Markdown panes' zoom, kept when a pane moves to another file or restarts.
+    private var markdownZoom: [String: CGFloat] = [:]
     /// The pane's ⋯ grip was pressed: a drag to move the pane begins.
     var onPaneDrag: ((String, NSEvent) -> Void)?
     /// The Pane menu, for right-clicks (acting on the pane, which takes focus first).
@@ -34,9 +40,10 @@ final class ContentHost: PaneHost {
     func terminal(_ id: String) -> TerminalSurfaceView? { views[id]?.content as? TerminalSurfaceView }
     func web(_ id: String) -> WebPaneView? { views[id]?.content as? WebPaneView }
     func ios(_ id: String) -> IosPaneView? { views[id]?.content as? IosPaneView }
+    func markdown(_ id: String) -> MarkdownPaneView? { views[id]?.content as? MarkdownPaneView }
 
     /// The view that should have the keyboard when the pane is focused.
-    func keyView(_ id: String) -> NSView? { terminal(id) ?? web(id)?.webView ?? ios(id) }
+    func keyView(_ id: String) -> NSView? { terminal(id) ?? web(id)?.webView ?? ios(id) ?? markdown(id)?.keyView }
 
     func start(_ pane: Pane) {
         let id = pane.id
@@ -45,11 +52,19 @@ final class ContentHost: PaneHost {
         var failure = "Ghostty could not create a terminal"
         switch pane.type {
         case .md:
-            // The web view version was removed; the native one (TextKit, see
-            // docs/kmux-spec.md §8) isn't built yet.
-            content = NSView()
-            started = false
-            failure = "Markdown panes aren't available yet: the native markdown view is still being built."
+            let path = Self.absolute(pane.path ?? "")
+            var directory: ObjCBool = false
+            if !FileManager.default.fileExists(atPath: path, isDirectory: &directory) || directory.boolValue {
+                content = NSView()
+                started = false
+                failure = directory.boolValue ? "\(path) is a folder, not a markdown file" : "No such file: \(path)"
+            } else {
+                let markdown = MarkdownPaneView(path: path, zoom: markdownZoom[id] ?? 1)
+                markdown.onFocus = { [weak self] in self?.onFocus?(id) }
+                markdown.onOpenMarkdown = { [weak self] target in self?.onOpenMarkdown?(id, target) }
+                markdown.contextMenu = { [weak self] in self?.contextMenu?() }
+                content = markdown
+            }
         case .web:
             let web = WebPaneView(url: pane.url ?? "about:blank")
             web.onFocus = { [weak self] in self?.onFocus?(id) }
@@ -119,6 +134,10 @@ final class ContentHost: PaneHost {
         if let terminal = view.content as? TerminalSurfaceView { runtime.detach(terminal) }
         (view.content as? WebPaneView)?.stop()
         (view.content as? IosPaneView)?.stop()
+        if let markdown = view.content as? MarkdownPaneView {
+            markdown.stop()
+            markdownZoom[pane.id] = markdown.zoom
+        }
         view.removeFromSuperview()
     }
 

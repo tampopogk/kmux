@@ -2,6 +2,8 @@ import AppKit
 import GhosttyKit
 import KmuxCore
 import KmuxDiagram
+import KmuxMarkdown
+import UniformTypeIdentifiers
 
 /// Owns the model, the control socket and one WindowController per window,
 /// and keeps the windows in step with the model.
@@ -36,6 +38,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         host.instance = instance
         host.onFocus = { [weak self] id in self?.focused(id) }
         host.onNavigate = { [weak self] id, url in self?.request(["cmd": "navigate", "args": ["pane": .string(id), "url": .string(url)]]) }
+        host.onOpenMarkdown = { [weak self] id, path in self?.request(["cmd": "navigate", "args": ["pane": .string(id), "path": .string(path)]]) }
         host.onPaneDrag = { [weak self] id, _ in self?.dragPane(id) }
         host.contextMenu = { [weak self] in self?.paneMenu?.copy() as? NSMenu }
         host.onCloseRequest = { [weak self] id in self?.request(["cmd": "close", "args": ["pane": .string(id)]]) }
@@ -86,6 +89,43 @@ final class AppController: NSObject, NSApplicationDelegate {
             guard let web = host.web(id) else { throw KmuxError("wrong_type", "not a web pane") }
             let text = try? await web.webView.evaluateJavaScript("document.body ? document.body.innerText : ''") as? String
             return ["url": web.webView.url.map { .string($0.absoluteString) } ?? nil, "text": .string(text ?? "")]
+        }
+        // A markdown pane as rendered: its text (diagrams as [diagram]), zoom and drawn diagrams.
+        core.extraCommands["debug.md"] = { [weak self] args in
+            guard let self, let markdown = try host.markdown(core.needPane(args["pane"]?.string).id) else { throw KmuxError("wrong_type", "not a running md pane") }
+            if let y = args["scroll"]?.number { markdown.scroll(toY: CGFloat(y)) }
+            let diagrams: [JSON] = markdown.drawnDiagrams.map { ["type": .string($0.type), "labels": .array($0.labels.map { .string($0) })] }
+            return ["text": .string(markdown.text), "zoom": .number(Double(markdown.zoom)), "diagrams": .array(diagrams),
+                    "render_ms": .number(markdown.renderMs), "parse_ms": .number(markdown.parseMs), "scroll": .number(Double(markdown.scrollTop))]
+        }
+        // A trackpad pinch over the middle of `pane`, sent through its window as
+        // magnify events (`steps`: each event's magnification). Replies with the
+        // zoom after each step.
+        core.extraCommands["debug.pinch"] = { [weak self] args in
+            guard let self, let id = try Optional(core.needPane(args["pane"]?.string).id), let view = host.keyView(id),
+                  let window = view.window else { throw KmuxError("wrong_type", "pane is not on screen") }
+            var steps = [0.1, 0.1, 0.1, 0.1, 0.1]
+            if case .array(let list)? = args["steps"] { steps = list.compactMap(\.number) }
+            let point = view.convert(NSPoint(x: view.visibleRect.midX, y: view.visibleRect.midY), to: nil)
+            let height = NSScreen.screens.first?.frame.height ?? 0
+            var zooms: [JSON] = [], renders: [JSON] = []
+            let phases = [(1, 0.0)] + steps.map { (2, $0) } + [(4, 0.0)]
+            for (phase, value) in phases {
+                guard let cg = CGEvent(source: nil) else { continue }
+                cg.type = CGEventType(rawValue: 29)! // gesture
+                cg.location = CGPoint(x: point.x, y: height - point.y)
+                cg.setIntegerValueField(CGEventField(rawValue: 110)!, value: 8) // zoom
+                cg.setDoubleValueField(CGEventField(rawValue: 113)!, value: value)
+                cg.setIntegerValueField(CGEventField(rawValue: 132)!, value: Int64(phase))
+                guard let event = NSEvent(cgEvent: cg) else { continue }
+                window.sendEvent(event)
+                try await Task.sleep(for: .milliseconds(40))
+                if phase == 2, let markdown = host.markdown(id) {
+                    zooms.append(.number(Double(markdown.zoom)))
+                    renders.append(.number(markdown.renderMs))
+                }
+            }
+            return ["zooms": .array(zooms), "render_ms": .array(renders)]
         }
         core.extraCommands["debug.menu"] = { _ in
             let items = (NSApp.mainMenu?.items ?? []).flatMap { top in
@@ -210,6 +250,20 @@ final class AppController: NSObject, NSApplicationDelegate {
     /// As in the model, a new iOS pane starts with an app already there: Settings.
     @objc func iosRight() { split("right", ios: true) }
     @objc func iosDown() { split("down", ios: true) }
+    @objc func markdownRight() { openMarkdown("right") }
+    @objc func markdownDown() { openMarkdown("down") }
+
+    /// Asks for a markdown file, then opens it beside the focused pane.
+    private func openMarkdown(_ direction: String) {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = ["md", "markdown", "mdown"].compactMap { UTType(filenameExtension: $0) }
+        panel.allowsOtherFileTypes = true
+        panel.message = "Choose a markdown file to show"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        var args: [String: JSON] = ["type": "md", "path": .string(url.path), "split": .string(direction)]
+        if let window = keyWindow?.id { args["window"] = .string(window) }
+        request(["cmd": "open", "args": .object(args)])
+    }
 
     /// The Home button of the focused iOS pane's simulator.
     @objc func pressHome() {
@@ -222,21 +276,23 @@ final class AppController: NSObject, NSApplicationDelegate {
         host.web(pane)?.editURL()
     }
 
-    /// Zoom In / Zoom Out / Actual Size: a terminal's font size (Ghostty's
-    /// own actions, on the same keys).
+    /// Zoom In / Zoom Out / Actual Size: a markdown pane's zoom, or a
+    /// terminal's font size (Ghostty's own actions, on the same keys).
     @objc func zoomIn() { zoomFocused(1, ghostty: "increase_font_size:1") }
     @objc func zoomOut() { zoomFocused(-1, ghostty: "decrease_font_size:1") }
     @objc func actualSize() { zoomFocused(0, ghostty: "reset_font_size") }
     private func zoomFocused(_ step: Int, ghostty action: String) {
         guard let pane = focusedPane else { return }
-        if let surface = host.terminal(pane)?.surface {
+        if let markdown = host.markdown(pane) {
+            markdown.zoom(by: step)
+        } else if let surface = host.terminal(pane)?.surface {
             _ = ghostty_surface_binding_action(surface, action, UInt(action.utf8.count))
         }
     }
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         if [#selector(zoomIn), #selector(zoomOut), #selector(actualSize)].contains(item.action) {
-            return focusedPane.map { host.terminal($0) != nil } ?? false
+            return focusedPane.map { host.terminal($0) != nil || host.markdown($0) != nil } ?? false
         }
         if item.action == #selector(pressHome) { return focusedPane.flatMap { host.ios($0)?.screen } != nil }
         if item.action == #selector(openURL) { return focusedPane.flatMap { host.web($0) } != nil }
@@ -624,6 +680,8 @@ final class AppController: NSObject, NSApplicationDelegate {
             ("New Web Pane Below", #selector(webDown), nil, nil),
             ("New iOS Pane Right", #selector(iosRight), nil, nil),
             ("New iOS Pane Below", #selector(iosDown), nil, nil),
+            ("New Markdown Pane Right…", #selector(markdownRight), nil, nil),
+            ("New Markdown Pane Below…", #selector(markdownDown), nil, nil),
             ("Open URL…", #selector(openURL), nil, .cmd("l")),
             ("Back", #selector(goBack), nil, nil),
             ("Forward", #selector(goForward), nil, nil),
