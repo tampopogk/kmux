@@ -579,6 +579,12 @@ const viewMenu = () => [
   ['Next tab', () => cycleTab(1), '⇧⌘]'],
   ['Previous tab', () => cycleTab(-1), '⇧⌘['],
   '-',
+  ...(focusedPane()?.type === 'md' ? [
+    ['Zoom in', () => zoomPane(focusedPane(), 1), '⌘='],
+    ['Zoom out', () => zoomPane(focusedPane(), -1), '⌘−'],
+    ['Actual size', () => zoomPane(focusedPane(), 0), '⌘0'],
+    '-',
+  ] : []),
   [$('#console').classList.contains('collapsed') ? 'Show mockup console' : 'Hide mockup console', toggleConsole],
 ];
 const windowMenu = () => [
@@ -670,8 +676,19 @@ function webView(p) {
 // Markdown panes: the file rendered as a readable page, diagrams drawn. The
 // mockup borrows marked and mermaid from a CDN; the app bundles its own.
 const mdScroll = {};
+// Zoom per markdown pane, kept when it moves to another file. ⌘= / ⌘− / ⌘0
+// step it; a pinch (ctrl+wheel in the browser) changes it smoothly.
+const mdZoom = {};
+const ZOOM_STEPS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3];
+function zoomPane(p, step) {
+  if (p?.type !== 'md') return;
+  const now = mdZoom[p.id] || 1;
+  mdZoom[p.id] = step === 0 ? 1 : step > 0 ? (ZOOM_STEPS.find(z => z > now + 0.001) ?? 3) : ([...ZOOM_STEPS].reverse().find(z => z < now - 0.001) ?? 0.5);
+  render();
+}
 function mdView(p) {
   const page = h('article', { class: 'md-page' });
+  page.style.zoom = mdZoom[p.id] || 1;
   const text = FILES[p.path] ?? '';
   if (window.marked) {
     page.innerHTML = marked.parse(text);
@@ -690,6 +707,12 @@ function mdView(p) {
   }
   const view = h('div', { class: 'md' }, page);
   view.addEventListener('scroll', () => { mdScroll[p.id] = view.scrollTop; });
+  view.addEventListener('wheel', e => {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    mdZoom[p.id] = Math.min(3, Math.max(0.5, (mdZoom[p.id] || 1) * Math.exp(-e.deltaY / 100)));
+    page.style.zoom = mdZoom[p.id];
+  }, { passive: false });
   requestAnimationFrame(() => {
     view.scrollTop = mdScroll[p.id] || 0;
     if (window.mermaid) mermaid.run({ nodes: page.querySelectorAll('.mermaid') }).catch(() => {});
@@ -939,7 +962,7 @@ $('#menu-window').addEventListener('click', e => showMenu(e.currentTarget, windo
 
 // kmux binds these to ⌘. The browser never hands ⌘N, ⌘T, ⌘W or ⌘` to a page,
 // so every shortcut also works with ⌥ in place of ⌘.
-const BROWSER_OWNED = ['KeyN', 'KeyT', 'KeyW', 'Backquote'];
+const BROWSER_OWNED = ['KeyN', 'KeyT', 'KeyW', 'Backquote', 'Equal', 'Minus', 'Digit0'];
 document.addEventListener('keydown', e => {
   if (e.ctrlKey || e.metaKey === e.altKey) return;
   if (e.metaKey && BROWSER_OWNED.includes(e.code)) return;
@@ -955,6 +978,9 @@ document.addEventListener('keydown', e => {
     BracketLeft: () => e.shiftKey ? cycleTab(-1) : cyclePane(-1),
     BracketRight: () => e.shiftKey ? cycleTab(1) : cyclePane(1),
     Backquote: () => cycleWin(e.shiftKey ? -1 : 1),
+    Equal: () => zoomPane(p, 1),
+    Minus: () => zoomPane(p, -1),
+    Digit0: () => zoomPane(p, 0),
   };
   if (actions[e.code]) { e.preventDefault(); hideMenu(); actions[e.code](); }
 });
@@ -983,7 +1009,7 @@ function reset(withShell = true) {
   }
   render();
   log('info', 'kmux mockup ready. Type help, or press "Run demo".');
-  log('info', 'In kmux: menus in the menu bar, right-click a pane or tab. ⌘D / ⇧⌘D split · ⌘[ ⌘] panes · ⇧⌘[ ⇧⌘] tabs · ⌘` windows · ⌘T tab · ⌘N window · ⌘W close pane · ⇧⌘W close window · ⌘R restart · ⇧⌘↩ zoom · ⌘L open URL. ⌥ works in place of ⌘.');
+  log('info', 'In kmux: menus in the menu bar, right-click a pane or tab. ⌘D / ⇧⌘D split · ⌘[ ⌘] panes · ⇧⌘[ ⇧⌘] tabs · ⌘` windows · ⌘T tab · ⌘N window · ⌘W close pane · ⇧⌘W close window · ⌘R restart · ⇧⌘↩ zoom · ⌘L open URL · ⌘= ⌘− ⌘0 zoom a markdown pane (or pinch). ⌥ works in place of ⌘.');
   log('info', 'Drag a window by its title bar, resize from its corner. Drag tabs within or between windows, or onto the desktop. Drag a pane by the ⋯ handle at its top onto a pane edge, a pane centre (swap), a tab, + or the desktop.');
 }
 
