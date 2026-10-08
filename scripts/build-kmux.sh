@@ -35,6 +35,7 @@ markdown-it.min.js https://cdn.jsdelivr.net/npm/markdown-it@14.3.2/dist/markdown
 purify.min.js https://cdn.jsdelivr.net/npm/dompurify@3.4.16/dist/purify.min.js 2c90a9b46d6463f26038a29b686e82bc91de01fdac9d5229e7cfe3b360134ea2
 mermaid.min.js https://cdn.jsdelivr.net/npm/mermaid@11.17.2/dist/mermaid.min.js 581ed7d74bd9048d0e3a91363927d72ef22942d7722546b27f7cc29e35390eb8
 ASSETS
+cp "$repo_root/NOTICE.md" "$app/Contents/Resources/NOTICE.md"
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

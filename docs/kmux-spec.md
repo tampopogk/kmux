@@ -23,7 +23,7 @@
 
 ## 1. Summary
 
-kmux is a native macOS **mux**. It has one or more windows of tabs, and each tab is split into **panes** that show Ghostty terminals, web pages or the iOS Simulator. Panes have no chrome. Everything is done through menus, shortcuts and dragging, or by other programs through the **control protocol**.
+kmux is a native macOS **mux**. It has one or more windows of tabs, and each tab is split into **panes** that show Ghostty terminals, web pages, markdown files or the iOS Simulator. Panes have no chrome. Everything is done through menus, shortcuts and dragging, or by other programs through the **control protocol**.
 
 UI actions and protocol requests go through the same core, so a click and a `kanna` or `kmux` command always behave the same way. Several **instances** of kmux can run at once, each with its own windows and socket ([3.4](#34-instances)).
 
@@ -35,6 +35,7 @@ flowchart LR
     C["kanna / scripts / agents"] -->|"control protocol"| CORE
     CORE --> T["term panes (Ghostty)"]
     CORE --> W["web panes"]
+    CORE --> M["md panes"]
     CORE --> I["ios panes (Simulator)"]
 ```
 
@@ -49,7 +50,7 @@ flowchart LR
 | Pane lifecycle and error states | ✅ | |
 | Shortcuts and menus | ✅ | The browser keeps ⌘N, ⌘T, ⌘W, ⇧⌘W and ⌘\`, so the model also accepts ⌥ in place of ⌘. |
 | Control-protocol commands and replies | ✅ | The model's console (marked **MOCKUP ONLY**) stands in for kanna. It is not part of kmux. |
-| Real terminals, web views and simulators | ❌ | Simulated. See [section 8](#8-decisions-and-open-questions). |
+| Real terminals, web views, markdown rendering and simulators | ❌ | Simulated. See [section 8](#8-decisions-and-open-questions). |
 | Transport (socket), persistence, performance | ❌ | See [section 8](#8-decisions-and-open-questions). |
 
 ---
@@ -154,9 +155,12 @@ kmux launches in front by default. With `--bg` (on the app or the CLI, or `KMUX_
 |------|-------|------------------------|
 | `term` | A shell or command, in a Ghostty terminal | Runs `cmd` if given. Ctrl+C interrupts. `exit [code]` moves the pane to **exited** and shows the code. |
 | `web` | A web page | No address bar. **Open URL** (⌘L) shows a floating address field. A `localhost` URL whose server isn't up shows "Waiting for …" and loads once the server responds. No back/forward history unless the pane is opened with `history` (`kmux open web URL --history`); then **Back** and **Forward** in the Pane menu and `navigate` with `back` or `forward` move through it. |
+| `md` | A markdown file, rendered | Like a GitHub page, light or dark with the system. `mermaid` code blocks are drawn as diagrams (an invalid one shows its error in place). Relative images and links work. The pane reloads when the file changes on disk, keeping its scroll position. A link to another markdown file opens it in the same pane; web links open in the browser; other files open in their app. A missing file or a folder fails with "No such file: …". Raw HTML in the file is sanitized. |
 | `ios` | An app in the native iOS Simulator | Shows "Booting \<device\>…", then the app, with the device and app named below the screen. Clicks and drags are sent as touches; **Home** (⇧⌘H) presses the Home button. An unknown device fails and lists the available devices. `app` is a `.app` built for the simulator (installed, then launched) or an installed app's bundle ID. Without a `device`, kmux uses a booted iPhone, else the newest one. The simulator stays booted when the pane closes, and `restart` relaunches the app. |
 
 ![Open URL (⌘L) on a web pane](img/kmux/open-url.png)
+
+![A markdown pane beside a terminal, with a mermaid diagram drawn](img/kmux/markdown-pane.png)
 
 ### 4.3 Lifecycle
 
@@ -186,7 +190,7 @@ The menu bar has **Pane**, **View** and **Window** menus. Right-clicking a pane 
 |--------|----------|-----------------|
 | Split right (new terminal) | ⌘D | Pane menu |
 | Split down (new terminal) | ⇧⌘D | Pane menu |
-| New web / iOS pane right or below (an iOS pane opens Settings) | — | Pane menu |
+| New web / markdown / iOS pane right or below (markdown asks for a file; an iOS pane opens Settings) | — | Pane menu |
 | Next / previous pane | ⌘] / ⌘[ | Pane menu |
 | Open URL (web panes) | ⌘L | Pane menu |
 | Back / forward (web panes opened with history) | — | Pane menu |
@@ -263,7 +267,7 @@ Each request is `{ id, cmd, args }`. Each reply is `{ id, ok: true, … }` or `{
 | `cmd` | `args` | Notes |
 |-------|--------|-------|
 | `capabilities` | — | The instance name, pane types, features and the commands this kmux supports. |
-| `open` | `type`, `url` / `cmd` / `cwd` / `app` / `device`, `history?` (web only, default off), `name?`, `split?` (`right` / `down` / `auto`), `size?`, `tab?`, `window?`, `wait?` | See [3.2](#32-sizes). The reply includes the pane's window and tab. |
+| `open` | `type`, `url` / `cmd` / `cwd` / `path` / `app` / `device`, `history?` (web only, default off), `name?`, `split?` (`right` / `down` / `auto`), `size?`, `tab?`, `window?`, `wait?` | See [3.2](#32-sizes). The reply includes the pane's window and tab. |
 | `arrange` | `layout` (tree), `window?` | See [3.3](#33-arrange). |
 | `move` | `pane`, plus one of: `to` + `side` (`left` / `right` / `top` / `bottom` / `swap`); `tab` (ID, or `new` with optional `window`); `window` (ID or `new`) | See [section 6](#6-moving-windows-tabs-and-panes). Moving to a window adds the pane to that window's active tab. |
 | `move-tab` | `tab`, `window?`, `index?` | Reorders a tab or moves it to another window, or to a new one. |
@@ -275,7 +279,7 @@ Each request is `{ id, cmd, args }`. Each reply is `{ id, ok: true, … }` or `{
 | `close` | one of `pane`, `tab`, `window` | Closes it and everything inside it. |
 | `restart` | `pane` | |
 | `send` | `pane`, `text` | `term` panes only. Runs `text` as a typed line. |
-| `navigate` | `pane`, plus `url`, `back: true` or `forward: true` | `web` panes only. `back` and `forward` need a pane opened with `history`. |
+| `navigate` | `pane`, plus `url`, `back: true` or `forward: true` (web), or `path` (md) | `web` and `md` panes. `back` and `forward` need a web pane opened with `history`. An md pane's relative `path` is resolved against the file it shows. |
 
 ### 7.2 Layout trees
 
@@ -295,7 +299,7 @@ A size can be written as a fraction (`"1/3"`), a percentage (`"25%"`) or a decim
 | `bad_request` | Unknown command or argument, invalid fraction, or resizing a pane that fills its tab. |
 | `not_found` | Unknown pane, tab or window. |
 | `name_taken` | Pane name already in use. |
-| `wrong_type` | `send` to a non-terminal pane, or `navigate` to a non-web pane. |
+| `wrong_type` | `send` to a non-terminal pane, or `navigate` to a terminal or iOS pane. |
 | `layout_invalid` | Malformed tree, a pane listed twice, or sizes adding up to more than 1. |
 | `start_failed` | The pane went to **failed**. The message says why. |
 
@@ -329,6 +333,7 @@ $ kmux instances
 | Platform | A native macOS app (AppKit). |
 | Terminal | Ghostty (GhosttyKit), reusing kanna-v3's build pipeline and terminal view. Start from **upstream Ghostty**: kanna-v3's fork existed to stream terminals from a daemon, and kmux has no persisted terminals for now. |
 | iOS pane | The iOS Simulator's screen is **embedded in the pane** with native UI, not a separate Simulator window placed over it. A spike (`spikes/ios-sim`) shows this works: the device's framebuffer IOSurface in a layer, clicks sent as touches, up to 61 frames/s, 35–39 ms from tap to screen update. Built in v0.7: `simctl` boots devices and installs and launches apps; Xcode's private CoreSimulator and SimulatorKit frameworks give the screen and touches, and a pane fails with a clear message if they change shape in a new Xcode. Not yet: the keyboard, edge swipes (use Home), two-finger gestures, rotation. |
+| Markdown pane | A web view showing a bundled page with **markdown-it**, **DOMPurify** and **mermaid**, pinned and checksummed in `scripts/build-kmux.sh` and copied into the app (licenses in `NOTICE.md`). Everything is served over a private `kmux-md://` scheme, so a document's relative files load without opening the whole disk to the page. Live reload polls the file twice a second. Not yet: syntax highlighting, math, a table of contents, back/forward. |
 | Transport | A **persistent connection** over the Unix socket: a client keeps one connection open and sends many requests over it. Messages are **newline-delimited JSON** (one request or reply per line), answered in order. Each instance has its own socket in `~/Library/Application Support/kmux/` (`kmux.sock` for the default instance), or `$KMUX_SOCKET`, readable only by the user. |
 | Shortcuts | Come from the user's **Ghostty config**, as in kanna-v3, with the shortcuts in [section 5](#5-menus-and-shortcuts) as defaults. |
 | Pane commands | A `term` pane's `cmd` is a shell command line, run by the user's login shell. |
@@ -385,6 +390,8 @@ Web panes' memory isn't counted: WebKit runs each page in its own process.
 | **Control protocol** | The JSON requests that other programs use to drive kmux. |
 | **Reference model** | The mockup in `reference/kmux/` that defines how kmux should look and behave. |
 | **Ghostty / GhosttyKit** | A fast terminal emulator, and the library build of it that kmux embeds. |
+| **Markdown** | A plain-text format for documents (headings, lists, links, tables), shown rendered in `md` panes. |
+| **Mermaid** | A text format for diagrams, written in a markdown code block marked `mermaid`. |
 | **iOS Simulator** | Apple's tool, part of Xcode, for running iPhone apps on a Mac. |
 | **Instance** | One running copy of the kmux app, with its own windows and socket. |
 | **Socket** | The Unix-domain socket file a kmux instance listens on for control-protocol requests. |

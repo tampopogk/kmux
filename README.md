@@ -1,7 +1,7 @@
 # kmux
 
 A native macOS terminal multiplexer: windows of tabs, split into Ghostty
-terminal, web and iOS Simulator panes, driven from the keyboard, the mouse, the `kmux` CLI
+terminal, web, markdown and iOS Simulator panes, driven from the keyboard, the mouse, the `kmux` CLI
 or anything that speaks its control protocol.
 
 | Path | What |
@@ -25,6 +25,9 @@ target/release/kmux-bench        # performance: pane start, typing latency, memo
 Run several kmux instances at once with `kmux --instance NAME …` (each has
 its own windows and socket); `kmux instances` lists them. Scripts and tests
 can start kmux with `--bg` (app or CLI, or `KMUX_BG=1`) to keep it behind your other windows.
+
+`kmux open md docs/spec.md` shows a markdown file, with mermaid diagrams,
+and reloads it when it changes.
 
 iOS panes need Xcode with an iOS simulator runtime:
 `kmux open ios --app build/MyApp.app --device "iPhone 16"` (or a bundle ID
