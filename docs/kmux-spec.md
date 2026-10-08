@@ -332,9 +332,10 @@ $ kmux instances
 | Topic | Decision |
 |-------|----------|
 | Platform | A native macOS app (AppKit). |
+| Native UI | **Only `web` panes are web views.** Everything else kmux shows, including terminals, markdown, iOS panes and kmux's own UI, is drawn natively (AppKit, TextKit, Core Animation). A web view is never used to draw a non-web pane. |
 | Terminal | Ghostty (GhosttyKit), reusing kanna-v3's build pipeline and terminal view. Start from **upstream Ghostty**: kanna-v3's fork existed to stream terminals from a daemon, and kmux has no persisted terminals for now. |
 | iOS pane | The iOS Simulator's screen is **embedded in the pane** with native UI, not a separate Simulator window placed over it. A spike (`spikes/ios-sim`) shows this works: the device's framebuffer IOSurface in a layer, clicks sent as touches, up to 61 frames/s, 35–39 ms from tap to screen update. Built in v0.7: `simctl` boots devices and installs and launches apps; Xcode's private CoreSimulator and SimulatorKit frameworks give the screen and touches, and a pane fails with a clear message if they change shape in a new Xcode. Not yet: the keyboard, edge swipes (use Home), two-finger gestures, rotation. |
-| Markdown pane | A web view showing a bundled page with **markdown-it**, **DOMPurify** and **mermaid**, pinned and checksummed in `scripts/build-kmux.sh` and copied into the app (licenses in `NOTICE.md`). Everything is served over a private `kmux-md://` scheme, so a document's relative files load without opening the whole disk to the page. Live reload polls the file twice a second. Zoom is the web view's page zoom (reflows) for the keys and its magnification for a pinch, as in Safari; in a terminal the same keys are Ghostty's font size. Not yet: syntax highlighting, math, a table of contents, back/forward. |
+| Markdown pane | **Native**, ported from kanna-v3's doc view (`apps/kanna3-mac/Sources/Kanna3Mac/Doc`): the file parsed and laid out with TextKit, so zoom and pinch lay the text out again at every step, smoothly. Zoom In / Zoom Out / Actual Size (⌘= ⌘− ⌘0) and a pinch change the same zoom, from 50% to 300% in Safari's steps; in a terminal the same keys are Ghostty's font size. Live reload polls the file twice a second. Diagrams: see [8.2](#82-open). **Status:** the first build (v0.8) is a web view running markdown-it, DOMPurify and mermaid; it breaks the Native UI rule and is to be replaced. Not yet: syntax highlighting, math, a table of contents, back/forward. |
 | Transport | A **persistent connection** over the Unix socket: a client keeps one connection open and sends many requests over it. Messages are **newline-delimited JSON** (one request or reply per line), answered in order. Each instance has its own socket in `~/Library/Application Support/kmux/` (`kmux.sock` for the default instance), or `$KMUX_SOCKET`, readable only by the user. |
 | Shortcuts | Come from the user's **Ghostty config**, as in kanna-v3, with the shortcuts in [section 5](#5-menus-and-shortcuts) as defaults. |
 | Pane commands | A `term` pane's `cmd` is a shell command line, run by the user's login shell. |
@@ -357,7 +358,9 @@ $ kmux instances
 
 ### 8.2 Open
 
-None right now.
+| Topic | Question |
+|-------|----------|
+| Mermaid diagrams in native markdown panes | There is no native mermaid renderer. kanna-v3 drew each diagram to an image in a hidden, off-screen web view running mermaid, then showed the image natively. Is a hidden renderer like that acceptable, given that nothing on screen is a web view? |
 
 ### 8.3 Performance
 
