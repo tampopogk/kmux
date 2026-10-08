@@ -202,7 +202,7 @@ fn instances(target: &Target, json_output: bool) -> Result<(), Failure> {
         let star = if t.socket == target.socket { "*" } else { " " };
         println!("{star} {:<width$}  {}, {}", t.instance, plural(count(list, "windows"), "window"), plural(count(list, "panes"), "pane"));
     }
-    println!("\n* where kmux commands go now ({}). Choose with --instance NAME or KMUX_INSTANCE.", target.socket.display());
+    println!("\n* the instance this shell's kmux commands talk to ({}). Pick another with --instance NAME or KMUX_INSTANCE.", target.socket.display());
     Ok(())
 }
 

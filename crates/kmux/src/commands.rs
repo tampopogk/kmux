@@ -33,7 +33,7 @@ pub static COMMANDS: &[Command] = &[
         options: &[
             ("--cmd CMD", "Shell command line to run in your login shell, e.g. \"npm run dev\". Put it in single quotes if it uses $VARS or ;, so your own shell leaves it alone. Default: an interactive shell."),
             ("--cwd DIR", "Working directory."),
-            ("--name NAME", "A name to refer to the pane by in later commands, instead of its ID."),
+            ("--name NAME", "Optional. A name to refer to the pane by in later commands; without one, use the ID that open prints (e.g. p3)."),
             ("--split right|down|auto", "Where the new pane goes relative to the focused pane. auto (default) splits along the longer side."),
             ("--size FRACTION", "Share of the focused pane's space the new pane takes: 1/3, 25% or 0.25. Default 1/2."),
             ("--tab", "Open in a new tab instead of splitting."),
@@ -170,7 +170,7 @@ pub static COMMANDS: &[Command] = &[
         summary: "Lay out existing panes in one go. Panes left out move to a new tab.",
         usage: "kmux arrange LAYOUT [--window WINDOW]",
         options: &[("--window WINDOW", "Arrange in that window's active tab. Default: the key window.")],
-        notes: "LAYOUT is a JSON tree: {\"split\": \"row\"|\"column\", \"children\": [...]} where each child is {\"pane\": NAME_OR_ID, \"size\": FRACTION?} or another split. Unsized children share what is left. row = side by side, column = stacked.",
+        notes: "LAYOUT is a JSON tree: {\"split\": \"row\"|\"column\", \"children\": [...]} where each child is {\"pane\": NAME_OR_ID, \"size\": FRACTION?} or another split. FRACTION is a string like \"2/3\" or \"25%\", or a number like 0.25. Unsized children share what is left. row = side by side, column = stacked.",
         examples: &[(
             "kmux arrange '{\"split\":\"row\",\"children\":[{\"pane\":\"server\",\"size\":\"2/3\"},{\"pane\":\"logs\"}]}'",
             "server on the left two thirds, logs on the right.",
