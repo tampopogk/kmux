@@ -5,8 +5,8 @@ import Testing
 
 @MainActor
 struct MarkdownRendererTests {
-    private func render(_ source: String, zoom: CGFloat = 1) -> NSAttributedString {
-        var renderer = MarkdownRenderer(zoom: zoom, folder: URL(fileURLWithPath: "/tmp"), diagrams: DiagramCache())
+    private func render(_ source: String) -> NSAttributedString {
+        var renderer = MarkdownRenderer(folder: URL(fileURLWithPath: "/tmp"), diagrams: DiagramCache())
         return renderer.render(Document(parsing: source))
     }
 
@@ -59,11 +59,6 @@ struct MarkdownRendererTests {
         #expect(block?.table.numberOfColumns == 2)
         #expect(block?.startingRow == 1 && block?.startingColumn == 1)
         #expect(style?.alignment == .right)
-    }
-
-    @Test func zoomScalesTheText() {
-        let font = { (text: NSAttributedString) in (text.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)?.pointSize ?? 0 }
-        #expect(font(render("plain", zoom: 2)) == font(render("plain")) * 2)
     }
 
     @Test func zoomStepsFollowSafari() {

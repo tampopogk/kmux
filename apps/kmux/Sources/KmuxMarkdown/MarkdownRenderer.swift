@@ -24,8 +24,7 @@ final class BlockDecoration: NSObject {
     }
 }
 
-/// Mermaid layouts by source: layout doesn't depend on zoom, so a re-render
-/// (a zoom step, a reload) reuses them and diagrams never flash.
+/// Mermaid layouts by source, so a reload reuses them and diagrams never flash.
 @MainActor
 final class DiagramCache {
     private var layouts: [String: Result<DiagramLayout, DiagramError>] = [:]
@@ -49,10 +48,9 @@ final class DiagramCache {
 
 /// Turns a markdown document into attributed text for a read-only TextKit
 /// view: GitHub-flavoured markdown, tables as text tables, local images and
-/// Mermaid diagrams as attachments. Everything scales with `zoom`.
+/// Mermaid diagrams as attachments.
 @MainActor
 struct MarkdownRenderer {
-    var zoom: CGFloat = 1
     /// The document's folder: relative images resolve against it.
     var folder: URL
     var diagrams: DiagramCache
@@ -61,8 +59,7 @@ struct MarkdownRenderer {
     private var slugs: [String: Int] = [:]
     private(set) var diagramSources: [String] = []
 
-    init(zoom: CGFloat = 1, folder: URL, diagrams: DiagramCache) {
-        self.zoom = zoom
+    init(folder: URL, diagrams: DiagramCache) {
         self.folder = folder
         self.diagrams = diagrams
     }
@@ -77,15 +74,15 @@ struct MarkdownRenderer {
 
     // MARK: Fonts and paragraphs
 
-    var bodyFont: NSFont { .systemFont(ofSize: MarkdownTheme.bodySize * zoom) }
-    var monoFont: NSFont { .monospacedSystemFont(ofSize: MarkdownTheme.monoSize * zoom, weight: .regular) }
+    var bodyFont: NSFont { .systemFont(ofSize: MarkdownTheme.bodySize) }
+    var monoFont: NSFont { .monospacedSystemFont(ofSize: MarkdownTheme.monoSize, weight: .regular) }
 
     private func paragraph(_ context: Context, before: CGFloat = 0, after: CGFloat = 10, lineSpacing: CGFloat = 3,
                            headIndent: CGFloat? = nil) -> NSMutableParagraphStyle {
         let style = NSMutableParagraphStyle()
-        style.lineSpacing = lineSpacing * zoom
-        style.paragraphSpacingBefore = before * zoom
-        style.paragraphSpacing = (context.tight ? min(after, 4) : after) * zoom
+        style.lineSpacing = lineSpacing
+        style.paragraphSpacingBefore = before
+        style.paragraphSpacing = context.tight ? min(after, 4) : after
         style.firstLineHeadIndent = context.indent
         style.headIndent = headIndent ?? context.indent
         return style
@@ -111,7 +108,7 @@ struct MarkdownRenderer {
         switch markup {
         case let heading as Heading:
             let level = min(max(heading.level, 1), 6)
-            let font = NSFont.systemFont(ofSize: MarkdownTheme.headingSizes[level - 1] * zoom, weight: level <= 2 ? .bold : .semibold)
+            let font = NSFont.systemFont(ofSize: MarkdownTheme.headingSizes[level - 1], weight: level <= 2 ? .bold : .semibold)
             let text = inline(heading.children, attributes(context, font: font))
             let style = paragraph(context, before: level <= 2 ? 14 : 10, after: level <= 2 ? 10 : 6, lineSpacing: 2)
             text.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: text.length))
@@ -129,7 +126,7 @@ struct MarkdownRenderer {
         case let quote as BlockQuote:
             blockCount += 1
             var inner = context
-            inner.indent += 16 * zoom
+            inner.indent += 16
             inner.color = MarkdownTheme.muted
             inner.quote = BlockDecoration(.quote, id: blockCount, indent: context.indent)
             for child in quote.children { block(child, inner, into: out) }
@@ -174,10 +171,10 @@ struct MarkdownRenderer {
     }
 
     private mutating func listItems(_ items: [ListItem], ordered start: Int?, _ context: Context, into out: NSMutableAttributedString) {
-        let depth = Int((context.indent / (24 * zoom)).rounded())
+        let depth = Int((context.indent / 24).rounded())
         let bullets = ["•", "◦", "▪"]
         let widest = start.map { "\($0 + items.count - 1)." } ?? "☐"
-        let markerWidth = max(18 * zoom, (widest + " ").size(withAttributes: [.font: bodyFont]).width + 6 * zoom)
+        let markerWidth = max(18, (widest + " ").size(withAttributes: [.font: bodyFont]).width + 6)
         for (index, item) in items.enumerated() {
             var marker = start.map { "\($0 + index)." } ?? bullets[depth % bullets.count]
             switch item.checkbox {
@@ -212,7 +209,7 @@ struct MarkdownRenderer {
         }
         // Space after the whole list, as after a paragraph.
         if out.length > 0, let style = (out.attribute(.paragraphStyle, at: out.length - 1, effectiveRange: nil) as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle {
-            style.paragraphSpacing = (context.tight ? 4 : 10) * zoom
+            style.paragraphSpacing = context.tight ? 4 : 10
             out.addAttribute(.paragraphStyle, value: style, range: (out.string as NSString).paragraphRange(for: NSRange(location: out.length - 1, length: 0)))
         }
     }
@@ -220,7 +217,7 @@ struct MarkdownRenderer {
     private mutating func codeBlock(_ code: String, _ context: Context, into out: NSMutableAttributedString) {
         blockCount += 1
         let decoration = BlockDecoration(.code, id: blockCount, indent: context.indent)
-        let pad = 12 * zoom
+        let pad: CGFloat = 12
         var lines = code.components(separatedBy: "\n")
         if lines.count > 1, lines.last == "" { lines.removeLast() }
         for (index, line) in lines.enumerated() {
@@ -241,7 +238,7 @@ struct MarkdownRenderer {
         switch diagrams.layout(source) {
         case .success(let layout) where layout.scene != nil:
             let attachment = NSTextAttachment()
-            attachment.attachmentCell = DiagramCell(scene: layout.scene!, type: layout.type, zoom: zoom)
+            attachment.attachmentCell = DiagramCell(scene: layout.scene!, type: layout.type)
             let text = NSMutableAttributedString(attachment: attachment)
             let style = paragraph(context, before: 6, after: 14)
             style.alignment = .center
@@ -259,7 +256,7 @@ struct MarkdownRenderer {
 
     private func note(_ text: String, color: NSColor, _ context: Context, into out: NSMutableAttributedString) {
         out.append(NSAttributedString(string: text + "\n", attributes: [
-            .font: NSFont.systemFont(ofSize: 12.5 * zoom, weight: .medium), .foregroundColor: color, .paragraphStyle: paragraph(context, after: 0),
+            .font: NSFont.systemFont(ofSize: 12.5, weight: .medium), .foregroundColor: color, .paragraphStyle: paragraph(context, after: 0),
         ]))
     }
 
@@ -276,14 +273,14 @@ struct MarkdownRenderer {
                 let block = NSTextTableBlock(table: grid, startingRow: rowIndex, rowSpan: 1, startingColumn: column, columnSpan: 1)
                 block.setWidth(1, type: .absoluteValueType, for: .border)
                 block.setBorderColor(MarkdownTheme.line)
-                block.setWidth(6 * zoom, type: .absoluteValueType, for: .padding, edge: .minY)
-                block.setWidth(6 * zoom, type: .absoluteValueType, for: .padding, edge: .maxY)
-                block.setWidth(12 * zoom, type: .absoluteValueType, for: .padding, edge: .minX)
-                block.setWidth(12 * zoom, type: .absoluteValueType, for: .padding, edge: .maxX)
+                block.setWidth(6, type: .absoluteValueType, for: .padding, edge: .minY)
+                block.setWidth(6, type: .absoluteValueType, for: .padding, edge: .maxY)
+                block.setWidth(12, type: .absoluteValueType, for: .padding, edge: .minX)
+                block.setWidth(12, type: .absoluteValueType, for: .padding, edge: .maxX)
                 if rowIndex == 0 { block.backgroundColor = MarkdownTheme.panel }
                 let style = NSMutableParagraphStyle()
                 style.textBlocks = [block]
-                style.lineSpacing = 2 * zoom
+                style.lineSpacing = 2
                 switch column < alignments.count ? alignments[column] : nil {
                 case .center: style.alignment = .center
                 case .right: style.alignment = .right
@@ -297,7 +294,7 @@ struct MarkdownRenderer {
             }
         }
         // Room after the table, as after a paragraph.
-        out.append(NSAttributedString(string: "\n", attributes: [.font: NSFont.systemFont(ofSize: 4 * zoom), .paragraphStyle: paragraph(context, after: 6)]))
+        out.append(NSAttributedString(string: "\n", attributes: [.font: NSFont.systemFont(ofSize: 4), .paragraphStyle: paragraph(context, after: 6)]))
     }
 
     // MARK: Inline
@@ -358,7 +355,7 @@ struct MarkdownRenderer {
         let url = path.hasPrefix("file://") ? URL(string: path) : path.hasPrefix("/") ? URL(fileURLWithPath: path) : folder.appendingPathComponent(path)
         guard let url, let image = NSImage(contentsOf: url) else { return nil }
         let attachment = NSTextAttachment()
-        attachment.attachmentCell = ImageCell(image: image, zoom: zoom)
+        attachment.attachmentCell = ImageCell(image: image)
         return attachment
     }
 

@@ -96,7 +96,8 @@ final class AppController: NSObject, NSApplicationDelegate {
             if let y = args["scroll"]?.number { markdown.scroll(toY: CGFloat(y)) }
             let diagrams: [JSON] = markdown.drawnDiagrams.map { ["type": .string($0.type), "labels": .array($0.labels.map { .string($0) })] }
             return ["text": .string(markdown.text), "zoom": .number(Double(markdown.zoom)), "diagrams": .array(diagrams),
-                    "render_ms": .number(markdown.renderMs), "parse_ms": .number(markdown.parseMs), "scroll": .number(Double(markdown.scrollTop))]
+                    "render_ms": .number(markdown.renderMs), "parse_ms": .number(markdown.parseMs), "scroll": .number(Double(markdown.scrollTop)),
+                    "layout_width": .number(Double(markdown.layoutWidth))]
         }
         // A trackpad pinch over the middle of `pane`, sent through its window as
         // magnify events (`steps`: each event's magnification). Replies with the

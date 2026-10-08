@@ -216,7 +216,8 @@ dg="$(raw '{"id":1,"cmd":"debug.diagram","args":{"source":"flowchart LR\n  A[KMU
 [[ "$(raw '{"id":1,"cmd":"debug.diagram","args":{"source":"flowchart LR\n  A -->"}}')" == *"Diagram error"* ]] || fail "invalid diagrams should say so"
 
 # 8c. Markdown panes: rendered natively (no web view), diagrams drawn,
-# live reload, navigate, zoom keys and a smooth pinch, a missing file.
+# live reload, navigate, magnification (keys and a smooth pinch, never
+# re-wrapping the text), a missing file.
 mkdir -p "$out/docs"
 cat > "$out/docs/spec.md" <<'MD'
 # KMUX MD OK
@@ -245,9 +246,11 @@ mdzoom() { field zoom <<<"$(md)"; }
 echo "Edited on disk" >> "$out/docs/spec.md"
 for _ in $(seq 20); do [[ "$(mdtext)" == *"Edited on disk"* ]] && break; sleep 0.25; done
 [[ "$(mdtext)" == *"Edited on disk"* ]] || fail "markdown pane should reload when the file changes"
+width="$(field layout_width <<<"$(md)")"
 raw '{"id":1,"cmd":"debug.key","args":{"key":"cmd+="}}' >/dev/null
 raw '{"id":1,"cmd":"debug.key","args":{"key":"cmd+="}}' >/dev/null
-[[ "$(mdzoom)" == 1.25 ]] || fail "⌘= twice should zoom to 125%: $(mdzoom)"
+[[ "$(mdzoom)" == 1.25 ]] || fail "⌘= twice should magnify to 125%: $(mdzoom)"
+[[ "$(field layout_width <<<"$(md)")" == "$width" ]] || fail "magnifying should not re-wrap the text: $width → $(field layout_width <<<"$(md)")"
 "$cli" navigate doc "$out/docs/other.md" >/dev/null
 [[ "$(mdtext)" == *"OTHER PAGE"* ]] || fail "navigate should show the other file: $(mdtext)"
 [[ "$(mdzoom)" == 1.25 ]] || fail "zoom should stay when the pane moves to another file: $(mdzoom)"
@@ -260,6 +263,10 @@ zooms = json.loads(sys.argv[1])["zooms"]
 assert len(zooms) == 4 and all(b > a for a, b in zip([1] + zooms, zooms)), zooms
 assert abs(zooms[-1] - 1.05 ** 4) < 0.01, zooms  # follows the fingers, not the ⌘= steps
 PY
+[[ "$(field layout_width <<<"$(md)")" == "$width" ]] || fail "a pinch should not re-wrap the text"
+sleep 1 # the scroll view finishes the gesture before keys act again
+raw '{"id":1,"cmd":"debug.key","args":{"key":"cmd+0"}}' >/dev/null
+[[ "$(mdzoom)" == 1 ]] || fail "⌘0 after a pinch should go back to actual size: $(mdzoom)"
 missing="$("$cli" open md "$out/docs/nope.md" --window "$mdw" 2>&1)" && fail "a missing file should fail"
 [[ "$missing" == *"No such file"* ]] || fail "a missing file should say so: $missing"
 folder="$("$cli" open md "$out/docs" --window "$mdw" 2>&1)" && fail "a folder should fail"

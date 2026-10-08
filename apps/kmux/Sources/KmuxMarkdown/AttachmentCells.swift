@@ -2,30 +2,26 @@ import AppKit
 import KmuxDiagram
 
 /// A Mermaid diagram in the text, drawn as vectors from its laid-out scene:
-/// sharp at any zoom, and redrawn at once while pinching (layout doesn't
-/// depend on zoom, so it is never recomputed). Too wide for the text, it
-/// shrinks to fit.
+/// sharp at any magnification. Too wide for the text, it shrinks to fit.
 final class DiagramCell: NSTextAttachmentCell {
     // Read by TextKit's layout callbacks; set once, never changed.
     nonisolated(unsafe) let scene: DiagramScene
     nonisolated let diagramType: String
-    nonisolated let zoom: CGFloat
 
-    init(scene: DiagramScene, type: String, zoom: CGFloat) {
+    init(scene: DiagramScene, type: String) {
         self.scene = scene
         self.diagramType = type
-        self.zoom = zoom
         super.init()
     }
 
     required init(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     nonisolated private func scale(width: CGFloat) -> CGFloat {
-        guard scene.size.width > 0 else { return zoom }
-        return min(zoom, max(0.1, width) / scene.size.width)
+        guard scene.size.width > 0 else { return 1 }
+        return min(1, max(0.1, width) / scene.size.width)
     }
 
-    override func cellSize() -> NSSize { NSSize(width: scene.size.width * zoom, height: scene.size.height * zoom) }
+    override func cellSize() -> NSSize { scene.size }
 
     override func cellFrame(for textContainer: NSTextContainer, proposedLineFragment lineFrag: NSRect,
                             glyphPosition position: NSPoint, characterIndex charIndex: Int) -> NSRect {
@@ -49,21 +45,18 @@ final class DiagramCell: NSTextAttachmentCell {
     override func wantsToTrackMouse() -> Bool { false }
 }
 
-/// A local image in the text, at its natural size times the zoom, shrunk to
-/// fit the text width.
+/// A local image in the text, at its natural size, shrunk to fit the text width.
 final class ImageCell: NSTextAttachmentCell {
     nonisolated let picture: NSImage
-    nonisolated let zoom: CGFloat
 
-    init(image: NSImage, zoom: CGFloat) {
+    init(image: NSImage) {
         picture = image
-        self.zoom = zoom
         super.init(imageCell: image)
     }
 
     required init(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    override func cellSize() -> NSSize { NSSize(width: picture.size.width * zoom, height: picture.size.height * zoom) }
+    override func cellSize() -> NSSize { picture.size }
 
     override func cellFrame(for textContainer: NSTextContainer, proposedLineFragment lineFrag: NSRect,
                             glyphPosition position: NSPoint, characterIndex charIndex: Int) -> NSRect {

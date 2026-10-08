@@ -3,8 +3,6 @@ import AppKit
 /// Draws what sits behind markdown text: code block panels, the bar beside a
 /// quote and horizontal rules (the `.kmuxBlock` attribute).
 final class MarkdownLayoutManager: NSLayoutManager {
-    var zoom: CGFloat = 1
-
     override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
         super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
         guard let storage = textStorage, let container = textContainers.first, storage.length > 0 else { return }
@@ -24,16 +22,16 @@ final class MarkdownLayoutManager: NSLayoutManager {
             let right = origin.x + container.size.width - container.lineFragmentPadding
             switch block.kind {
             case .code:
-                let pad = 8 * zoom
+                let pad: CGFloat = 8
                 let panel = NSRect(x: left, y: origin.y + used.minY - pad, width: right - left, height: used.height + pad * 2)
                 MarkdownTheme.panel.setFill()
-                NSBezierPath(roundedRect: panel, xRadius: 6 * zoom, yRadius: 6 * zoom).fill()
+                NSBezierPath(roundedRect: panel, xRadius: 6, yRadius: 6).fill()
             case .quote:
                 MarkdownTheme.line.setFill()
-                NSRect(x: left + 2 * zoom, y: origin.y + used.minY, width: 3 * zoom, height: used.height).fill()
+                NSRect(x: left + 2, y: origin.y + used.minY, width: 3, height: used.height).fill()
             case .rule:
                 MarkdownTheme.line.setFill()
-                NSRect(x: left, y: origin.y + used.midY.rounded(), width: right - left, height: max(1, zoom)).fill()
+                NSRect(x: left, y: origin.y + used.midY.rounded(), width: right - left, height: 1).fill()
             }
         }
     }

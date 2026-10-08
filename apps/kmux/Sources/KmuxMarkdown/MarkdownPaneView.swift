@@ -3,11 +3,11 @@ import Markdown
 
 /// A markdown pane: a file rendered natively (TextKit, no web view), read
 /// only, reloaded when it changes on disk. Mermaid blocks are drawn by
-/// KmuxDiagram. Zoom steps with ⌘= ⌘− ⌘0 and follows a pinch smoothly by
-/// laying the text out again at each step, as kanna-v3's doc view did.
+/// KmuxDiagram. Zoom is plain magnification (NSScrollView's): a pinch or
+/// ⌘= ⌘− ⌘0 enlarge the page to inspect details without reflowing it.
 @MainActor
 public final class MarkdownPaneView: NSView, NSTextViewDelegate {
-    /// Safari's steps for Zoom In / Zoom Out; a pinch moves freely between the ends.
+    /// Safari's steps for Zoom In / Zoom Out; a pinch goes from 0.5 to 4.
     public static let zoomSteps: [CGFloat] = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3]
 
     public var onFocus: (() -> Void)? { didSet { textView.onFocus = onFocus } }
@@ -18,7 +18,8 @@ public final class MarkdownPaneView: NSView, NSTextViewDelegate {
     public let path: String
     /// The view that takes keyboard focus.
     public var keyView: NSView { textView }
-    public private(set) var zoom: CGFloat = 1
+    /// The magnification (1 is actual size).
+    public var zoom: CGFloat { scrollView.magnification }
     /// How long the last render took (parse excluded), in milliseconds.
     public private(set) var renderMs: Double = 0
     public private(set) var parseMs: Double = 0
@@ -30,11 +31,9 @@ public final class MarkdownPaneView: NSView, NSTextViewDelegate {
     private var document = Document(parsing: "")
     private var stamp: (Date, Int)?
     private var poll: Timer?
-    private var pendingZoom: CGFloat?
 
     public init(path: String, zoom: CGFloat = 1) {
         self.path = path
-        self.zoom = zoom
         let storage = NSTextStorage()
         storage.addLayoutManager(layoutManager)
         let container = NSTextContainer(size: NSSize(width: 600, height: CGFloat.greatestFiniteMagnitude))
@@ -47,10 +46,13 @@ public final class MarkdownPaneView: NSView, NSTextViewDelegate {
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
         scrollView.drawsBackground = true
+        scrollView.allowsMagnification = true
+        scrollView.minMagnification = Self.zoomSteps.first!
+        scrollView.maxMagnification = 4
+        scrollView.magnification = zoom
         scrollView.backgroundColor = MarkdownTheme.background
         addSubview(scrollView)
         textView.delegate = self
-        textView.onMagnify = { [weak self] event in self?.pinch(event) }
         load()
         poll = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.reloadIfChanged() }
@@ -89,12 +91,14 @@ public final class MarkdownPaneView: NSView, NSTextViewDelegate {
         updateInset()
     }
 
-    /// Wide panes centre the text at its maximum width (scaled with the zoom).
+    /// Wide panes centre the text at its maximum width. The text is laid out
+    /// for the pane's unmagnified width, so magnifying never re-wraps it.
     private func updateInset() {
         let width = scrollView.contentSize.width
-        let inset = max(28 * min(zoom, 1), (width - (MarkdownTheme.maxTextWidth * zoom + 10)) / 2)
-        let size = NSSize(width: inset, height: 22 * min(zoom, 1.5))
+        let inset = max(28, (width - (MarkdownTheme.maxTextWidth + 10)) / 2)
+        let size = NSSize(width: inset, height: 22)
         if textView.textContainerInset != size { textView.textContainerInset = size }
+        textView.layoutWidth = width
         if textView.frame.width != width { textView.frame.size.width = width }
     }
 
@@ -124,10 +128,9 @@ public final class MarkdownPaneView: NSView, NSTextViewDelegate {
     private func render() {
         let start = Date()
         let position = readingPosition()
-        var renderer = MarkdownRenderer(zoom: zoom, folder: URL(fileURLWithPath: path).deletingLastPathComponent(), diagrams: diagrams)
+        var renderer = MarkdownRenderer(folder: URL(fileURLWithPath: path).deletingLastPathComponent(), diagrams: diagrams)
         let text = renderer.render(document)
         diagrams.keep(only: Set(renderer.diagramSources))
-        layoutManager.zoom = zoom
         updateInset()
         textView.textStorage?.setAttributedString(text)
         if let position { restoreReadingPosition(position) }
@@ -136,40 +139,12 @@ public final class MarkdownPaneView: NSView, NSTextViewDelegate {
 
     // MARK: Zoom
 
-    /// One step in (1) or out (-1), or back to actual size (0).
+    /// One step in (1) or out (-1), or back to actual size (0), about the middle of the view.
     public func zoom(by step: Int) {
-        let steps = Self.zoomSteps
-        switch step {
-        case 0: setZoom(1)
-        case 1...: setZoom(steps.first { $0 > zoom + 0.001 } ?? steps.last!)
-        default: setZoom(steps.last { $0 < zoom - 0.001 } ?? steps.first!)
-        }
-    }
-
-    public func setZoom(_ value: CGFloat) {
-        guard value.isFinite else { return }
-        let value = min(Self.zoomSteps.last!, max(Self.zoomSteps.first!, value))
-        guard value != zoom else { return }
-        zoom = value
-        render()
-    }
-
-    /// A pinch: the zoom follows the fingers. Events arrive faster than the
-    /// text can be laid out, so they're folded into one render per turn of
-    /// the run loop.
-    func pinch(_ event: NSEvent) {
-        let base = pendingZoom ?? zoom
-        let target = min(Self.zoomSteps.last!, max(Self.zoomSteps.first!, base * (1 + event.magnification)))
-        let scheduled = pendingZoom != nil
-        pendingZoom = target
-        guard !scheduled else { return }
-        DispatchQueue.main.async { [weak self] in
-            MainActor.assumeIsolated {
-                guard let self, let target = self.pendingZoom else { return }
-                self.pendingZoom = nil
-                self.setZoom(target)
-            }
-        }
+        let steps = Self.zoomSteps, now = zoom
+        let target = step == 0 ? 1 : step > 0 ? (steps.first { $0 > now + 0.001 } ?? steps.last!) : (steps.last { $0 < now - 0.001 } ?? steps.first!)
+        let visible = scrollView.contentView.bounds
+        scrollView.setMagnification(target, centeredAt: NSPoint(x: visible.midX, y: visible.midY))
     }
 
     // MARK: Reading position (as in kanna-v3's doc view)
@@ -302,6 +277,9 @@ public final class MarkdownPaneView: NSView, NSTextViewDelegate {
         return out
     }
 
+    /// The width the text is laid out for (unchanged by magnification).
+    public var layoutWidth: CGFloat { textView.textContainer?.size.width ?? 0 }
+
     /// The scroll position's top, in points (for tests).
     public var scrollTop: CGFloat { scrollView.contentView.bounds.minY }
 
@@ -309,12 +287,19 @@ public final class MarkdownPaneView: NSView, NSTextViewDelegate {
     public func scroll(toY y: CGFloat) { textView.scroll(NSPoint(x: 0, y: max(0, y))) }
 }
 
-/// The text view inside a markdown pane: reports focus, adds kmux's pane
-/// menu to its own, and hands pinches to the pane.
+/// The text view inside a markdown pane: reports focus and adds kmux's pane
+/// menu to its own.
 final class MarkdownTextView: NSTextView {
     var onFocus: (() -> Void)?
     var contextMenu: (() -> NSMenu?)?
-    var onMagnify: ((NSEvent) -> Void)?
+    /// The pane's unmagnified width. Magnifying shrinks the scroll view's
+    /// visible width, and AppKit would narrow the text view to match and
+    /// re-wrap the text; the width stays this instead.
+    var layoutWidth: CGFloat = 0
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(NSSize(width: layoutWidth > 0 ? layoutWidth : newSize.width, height: newSize.height))
+    }
 
     override func becomeFirstResponder() -> Bool {
         let result = super.becomeFirstResponder()
@@ -333,9 +318,5 @@ final class MarkdownTextView: NSTextView {
             }
         }
         return menu
-    }
-
-    override func magnify(with event: NSEvent) {
-        if let onMagnify { onMagnify(event) } else { super.magnify(with: event) }
     }
 }
