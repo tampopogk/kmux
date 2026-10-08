@@ -53,6 +53,7 @@ struct Shortcut: Equatable {
 /// Key presses for `debug.key`, built from a virtual key code the way the
 /// system builds hardware events, so AppKit derives the characters from the
 /// current keyboard layout (hand-built NSEvents match menus differently).
+@MainActor
 enum SyntheticKey {
     private static let codes: [String: CGKeyCode] = [
         "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8, "v": 9, "b": 11, "q": 12, "w": 13, "e": 14,
