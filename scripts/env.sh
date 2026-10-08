@@ -5,6 +5,10 @@
 KMUX_GHOSTTY_REPO="https://github.com/ghostty-org/ghostty.git"
 KMUX_GHOSTTY_COMMIT="a806905ea1e3b1564b7cc4ab1c54084939ca59b3"
 
+# merman (Mermaid layout for diagrams) is pinned in crates/kmux-merman
+# (Cargo.toml and Cargo.lock) and needs this Rust, installed beside the default.
+KMUX_MERMAN_RUST="1.95"
+
 # Ghostty at that commit needs exactly this Zig. Homebrew may have moved on,
 # so if `zig` isn't it, the official release is downloaded into target/.
 KMUX_ZIG_VERSION="0.16.0"

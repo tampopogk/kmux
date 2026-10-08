@@ -208,6 +208,13 @@ for _ in $(seq 50); do [[ "$("$cli" --instance "$other" list)" == *child* ]] && 
 kill "$other_pid"; wait "$other_pid" 2>/dev/null || true
 [[ ! -e "$other_socket" ]] || fail "instance $other should remove its socket when it quits"
 
+# 8b. Mermaid diagrams, laid out by merman and drawn natively (no web view).
+dg="$(raw '{"id":1,"cmd":"debug.diagram","args":{"source":"flowchart LR\n  A[KMUX DIAGRAM] -->|yes| B{Ok?}","png":"'"$out"'/diagram.png"}}')"
+[[ "$(field type <<<"$dg")" == flowchart* && "$dg" == *'"KMUX DIAGRAM"'* && "$dg" == *'"yes"'* ]] || fail "flowchart should lay out with its labels: $dg"
+[[ -s "$out/diagram.png" ]] || fail "debug.diagram should write a PNG"
+[[ "$(field supported <<<"$(raw '{"id":1,"cmd":"debug.diagram","args":{"source":"pie\n \"a\": 1"}}')")" == False ]] || fail "pie isn't drawn yet"
+[[ "$(raw '{"id":1,"cmd":"debug.diagram","args":{"source":"flowchart LR\n  A -->"}}')" == *"Diagram error"* ]] || fail "invalid diagrams should say so"
+
 # 9. iOS panes: the simulator's screen in a pane, with taps and Home.
 # Boots a simulator if none is (it stays booted). KMUX_E2E_IOS=0 skips this.
 if [[ "${KMUX_E2E_IOS:-1}" != 0 ]] && xcrun simctl list devices available 2>/dev/null | grep -q iPhone; then

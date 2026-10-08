@@ -7,6 +7,9 @@ if [[ ! -d "$repo_root/target/ghosttykit/GhosttyKit.xcframework" ]]; then
   "$repo_root/scripts/build-ghosttykit.sh"
 fi
 
+# merman (Mermaid layout for diagrams): cheap when it's already built.
+"$repo_root/scripts/build-merman.sh"
+
 configuration="${KMUX_CONFIGURATION:-release}"
 build=(swift build --package-path "$repo_root/apps/kmux" --configuration "$configuration" --scratch-path "$repo_root/target/kmux-build")
 "${build[@]}"
@@ -18,6 +21,7 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$product_dir/kmux" "$app/Contents/MacOS/kmux"
 # Icon source: apps/kmux/Icon/make-icon.swift (regenerate kmux.icns with it).
 cp "$repo_root/apps/kmux/Icon/kmux.icns" "$app/Contents/Resources/kmux.icns"
+cp "$repo_root/LICENSE" "$repo_root/NOTICE" "$app/Contents/Resources/"
 
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

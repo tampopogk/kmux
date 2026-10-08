@@ -1,6 +1,7 @@
 import AppKit
 import GhosttyKit
 import KmuxCore
+import KmuxDiagram
 
 /// Owns the model, the control socket and one WindowController per window,
 /// and keeps the windows in step with the model.
@@ -47,6 +48,19 @@ final class AppController: NSObject, NSApplicationDelegate {
         core.extraCommands["debug.snapshot"] = { [weak self] args in try self?.snapshot(args) ?? [:] }
         core.extraCommands["debug.key"] = { [weak self] args in try self?.pressKey(args) ?? [:] }
         core.extraCommands["debug.click"] = { [weak self] args in try self?.click(args) ?? [:] }
+        // Lays out Mermaid `source` natively (KmuxDiagram); writes a PNG to `png` if given.
+        core.extraCommands["debug.diagram"] = { args in
+            let start = Date()
+            let layout: DiagramLayout
+            do { layout = try Diagram.layout(source: args["source"]?.string ?? "") } catch let error as DiagramError {
+                throw KmuxError("bad_request", "Diagram error: \(error.message)")
+            }
+            let ms = Date().timeIntervalSince(start) * 1000
+            guard let scene = layout.scene else { return ["type": .string(layout.type), "supported": false] }
+            if let path = args["png"]?.string { try scene.png(dark: args["dark"]?.bool == true)?.write(to: URL(fileURLWithPath: path)) }
+            return ["type": .string(layout.type), "supported": true, "width": .number(Double(scene.size.width)),
+                    "height": .number(Double(scene.size.height)), "labels": .array(scene.texts.map { .string($0) }), "layout_ms": .number(ms)]
+        }
         core.extraCommands["debug.text"] = { [weak self] args in
             guard let self, let terminal = try host.terminal(core.needPane(args["pane"]?.string).id) else { throw KmuxError("wrong_type", "not a terminal pane") }
             return ["text": .string(terminal.viewportText())]
