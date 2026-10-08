@@ -32,6 +32,7 @@ final class MarkdownPaneView: NSView, WKNavigationDelegate, WKScriptMessageHandl
         configuration.userContentController.add(WeakMessageHandler(self), name: "kmux")
         webView.navigationDelegate = self
         webView.setValue(false, forKey: "drawsBackground")
+        webView.allowsMagnification = true // pinch, as in Safari
         addSubview(webView)
         notice.alignment = .center
         notice.textColor = .secondaryLabelColor
@@ -60,6 +61,29 @@ final class MarkdownPaneView: NSView, WKNavigationDelegate, WKScriptMessageHandl
     /// The document as plain text, as shown (for tests).
     func text() async -> String {
         (try? await webView.evaluateJavaScript("document.getElementById('page').innerText") as? String) ?? ""
+    }
+
+    // MARK: Zoom
+
+    /// Safari's steps for Zoom In / Zoom Out.
+    private static let zoomSteps: [CGFloat] = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3]
+
+    /// Text zoom (reflows the page); 1 is actual size. A pinch magnifies on top of it.
+    var zoom: CGFloat {
+        get { webView.pageZoom }
+        set { webView.pageZoom = newValue }
+    }
+
+    /// One step in (1) or out (-1), or back to actual size (0, which also undoes a pinch).
+    func zoom(by step: Int) {
+        if step == 0 {
+            zoom = 1
+            webView.magnification = 1
+        } else if step > 0 {
+            zoom = Self.zoomSteps.first { $0 > zoom + 0.001 } ?? Self.zoomSteps.last!
+        } else {
+            zoom = Self.zoomSteps.last { $0 < zoom - 0.001 } ?? Self.zoomSteps.first!
+        }
     }
 
     // MARK: Rendering

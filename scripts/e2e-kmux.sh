@@ -241,6 +241,14 @@ for _ in $(seq 20); do [[ "$(mdtext)" == *"Edited on disk"* ]] && break; sleep 0
 "$cli" navigate doc "$out/docs/other.md" >/dev/null
 for _ in $(seq 20); do [[ "$(mdtext)" == *"OTHER PAGE"* ]] && break; sleep 0.25; done
 [[ "$(mdtext)" == *"OTHER PAGE"* ]] || fail "navigate should show the other file: $(mdtext)"
+mdzoom() { field zoom <<<"$(raw "{\"id\":1,\"cmd\":\"debug.web\",\"args\":{\"pane\":\"doc\"}}")"; }
+raw '{"id":1,"cmd":"debug.key","args":{"key":"cmd+="}}' >/dev/null
+raw '{"id":1,"cmd":"debug.key","args":{"key":"cmd+="}}' >/dev/null
+[[ "$(mdzoom)" == 1.25 ]] || fail "⌘= twice should zoom to 125%: $(mdzoom)"
+"$cli" navigate doc "$out/docs/spec.md" >/dev/null
+[[ "$(mdzoom)" == 1.25 ]] || fail "zoom should stay when the pane moves to another file: $(mdzoom)"
+raw '{"id":1,"cmd":"debug.key","args":{"key":"cmd+0"}}' >/dev/null
+[[ "$(mdzoom)" == 1 ]] || fail "⌘0 should go back to actual size: $(mdzoom)"
 missing="$("$cli" open md "$out/docs/nope.md" --window "$mdw" 2>&1)" && fail "a missing file should fail"
 [[ "$missing" == *"No such file"* ]] || fail "a missing file should say so: $missing"
 "$cli" close --window "$mdw" >/dev/null

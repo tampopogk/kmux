@@ -71,7 +71,9 @@ final class AppController: NSObject, NSApplicationDelegate {
         core.extraCommands["debug.web"] = { [weak self] args in
             guard let self else { return [:] }
             let id = try core.needPane(args["pane"]?.string).id
-            if let markdown = host.markdown(id) { return ["text": .string(await markdown.text())] }
+            if let markdown = host.markdown(id) {
+                return ["text": .string(await markdown.text()), "zoom": .number(markdown.zoom), "magnification": .number(markdown.webView.magnification)]
+            }
             guard let web = host.web(id) else { throw KmuxError("wrong_type", "not a web or markdown pane") }
             let text = try? await web.webView.evaluateJavaScript("document.body ? document.body.innerText : ''") as? String
             return ["url": web.webView.url.map { .string($0.absoluteString) } ?? nil, "text": .string(text ?? "")]
@@ -225,7 +227,24 @@ final class AppController: NSObject, NSApplicationDelegate {
         host.web(pane)?.editURL()
     }
 
+    /// Zoom In / Zoom Out / Actual Size: a markdown pane's page zoom, or a
+    /// terminal's font size (Ghostty's own actions, on the same keys).
+    @objc func zoomIn() { zoomFocused(1, ghostty: "increase_font_size:1") }
+    @objc func zoomOut() { zoomFocused(-1, ghostty: "decrease_font_size:1") }
+    @objc func actualSize() { zoomFocused(0, ghostty: "reset_font_size") }
+    private func zoomFocused(_ step: Int, ghostty action: String) {
+        guard let pane = focusedPane else { return }
+        if let markdown = host.markdown(pane) {
+            markdown.zoom(by: step)
+        } else if let surface = host.terminal(pane)?.surface {
+            _ = ghostty_surface_binding_action(surface, action, UInt(action.utf8.count))
+        }
+    }
+
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if [#selector(zoomIn), #selector(zoomOut), #selector(actualSize)].contains(item.action) {
+            return focusedPane.map { host.markdown($0) != nil || host.terminal($0) != nil } ?? false
+        }
         if item.action == #selector(pressHome) { return focusedPane.flatMap { host.ios($0)?.screen } != nil }
         if item.action == #selector(openURL) { return focusedPane.flatMap { host.web($0) } != nil }
         if item.action == #selector(goBack) { return !(focusedPane.flatMap { core.model.panes[$0]?.history?.back.isEmpty } ?? true) }
@@ -631,6 +650,10 @@ final class AppController: NSObject, NSApplicationDelegate {
             ("New Tab", #selector(newTab as () -> Void), "new_tab", .cmd("t")),
             ("Next Tab", #selector(nextTab), "next_tab", .shiftCmd("]")),
             ("Previous Tab", #selector(previousTab), "previous_tab", .shiftCmd("[")),
+            nil,
+            ("Zoom In", #selector(zoomIn), "increase_font_size:1", .cmd("=")),
+            ("Zoom Out", #selector(zoomOut), "decrease_font_size:1", .cmd("-")),
+            ("Actual Size", #selector(actualSize), "reset_font_size", .cmd("0")),
         ])
         let windowMenu = menu("Window", [
             ("New Window", #selector(newWindow), "new_window", .cmd("n")),

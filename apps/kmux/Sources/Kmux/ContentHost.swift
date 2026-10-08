@@ -11,6 +11,8 @@ final class ContentHost: PaneHost {
     /// `kmux` run inside a pane talks to the kmux that owns it.
     var instance = Instance(name: Instance.defaultName)
     private(set) var views: [String: PaneView] = [:]
+    /// Markdown panes' zoom, kept when a pane moves to another file or restarts.
+    private var markdownZoom: [String: CGFloat] = [:]
     var onFocus: ((String) -> Void)?
     var onCloseRequest: ((String) -> Void)?
     var onNavigate: ((String, String) -> Void)?
@@ -53,6 +55,7 @@ final class ContentHost: PaneHost {
             markdown.onFocus = { [weak self] in self?.onFocus?(id) }
             markdown.onOpenMarkdown = { [weak self] target in self?.onOpenMarkdown?(id, target) }
             markdown.webView.contextMenu = { [weak self] in self?.contextMenu?() }
+            markdown.zoom = markdownZoom[id] ?? 1
             content = markdown
             var directory: ObjCBool = false
             if !FileManager.default.fileExists(atPath: path, isDirectory: &directory) || directory.boolValue {
@@ -128,7 +131,10 @@ final class ContentHost: PaneHost {
         if let terminal = view.content as? TerminalSurfaceView { runtime.detach(terminal) }
         (view.content as? WebPaneView)?.stop()
         (view.content as? IosPaneView)?.stop()
-        (view.content as? MarkdownPaneView)?.stop()
+        if let markdown = view.content as? MarkdownPaneView {
+            markdown.stop()
+            markdownZoom[pane.id] = markdown.zoom
+        }
         view.removeFromSuperview()
     }
 
