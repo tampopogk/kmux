@@ -13,6 +13,7 @@ public final class Pane {
     public var error: String?
     public var command: String?
     public var cwd: String?
+    public var url: String?
 
     init(id: String, name: String?, type: PaneType) {
         self.id = id
@@ -196,6 +197,43 @@ public final class Model {
         if let parent = found.parent { parent.kids[found.index].node = split } else { tab.root = split }
     }
 
+    /// Adds a pane to a tab: as its root, or as a new column on the right
+    /// (all columns then share the width equally).
+    func append(_ id: String, to tab: Tab) {
+        guard let root = tab.root else {
+            tab.root = .pane(id)
+            return
+        }
+        if case .split(let split) = root, split.axis == .row {
+            let count = Double(split.kids.count)
+            for i in split.kids.indices { split.kids[i].size *= count / (count + 1) }
+            split.kids.append(Child(node: .pane(id), size: 1 / (count + 1)))
+        } else {
+            tab.root = .split(Split(axis: .row, kids: [Child(node: root, size: 0.5), Child(node: .pane(id), size: 0.5)]))
+        }
+    }
+
+    /// Puts pane `b` where pane `a` is, and `a` where `b` is.
+    func swap(_ a: String, _ b: String) {
+        guard let la = locate(a), let lb = locate(b) else { return }
+        setLeaf(la, to: b)
+        setLeaf(lb, to: a)
+    }
+
+    private func setLeaf(_ location: Location, to id: String) {
+        if let parent = location.parent { parent.kids[location.index].node = .pane(id) } else { location.tab.root = .pane(id) }
+    }
+
+    public func window(of tab: Tab) -> Window? { windows.first { $0.tabs.contains { $0 === tab } } }
+
+    func moveTab(_ tab: Tab, to destination: Window, index: Int?) {
+        guard let source = window(of: tab), let from = source.tabs.firstIndex(where: { $0 === tab }) else { return }
+        source.tabs.remove(at: from)
+        var index = index ?? destination.tabs.count
+        if source === destination, index > from { index -= 1 }
+        destination.tabs.insert(tab, at: min(index, destination.tabs.count))
+    }
+
     /// Closes empty tabs and windows and repairs focus.
     func dropEmpty() {
         for window in windows {
@@ -232,6 +270,7 @@ public final class Model {
             out["cmd"] = pane.command.map(JSON.string) ?? .null
             out["cwd"] = pane.cwd.map(JSON.string) ?? .null
         }
+        if pane.type == .web { out["url"] = pane.url.map(JSON.string) ?? .null }
         if let code = pane.exitCode { out["exitCode"] = .number(Double(code)) }
         if let error = pane.error { out["error"] = .string(error) }
         return .object(out)

@@ -1,4 +1,5 @@
 import AppKit
+import WebKit
 import KmuxCore
 
 /// One kmux window: draws the active tab's split tree.
@@ -39,7 +40,7 @@ final class WindowController: NSObject, NSWindowDelegate {
         if let previous { window.setFrameTopLeftPoint(window.cascadeTopLeft(from: previous.frame.origin + NSPoint(x: 0, y: previous.frame.height))) } else { window.center() }
     }
 
-    func render(_ model: Model, _ host: TerminalHost) {
+    func render(_ model: Model, _ host: ContentHost) {
         guard let state = model.window(id), let tab = state.activeTab else { return }
         window.title = "\(tab.title) — \(id)"
         tabBar.show(model, state)
@@ -54,13 +55,13 @@ final class WindowController: NSObject, NSWindowDelegate {
         // Keyboard focus follows the model's focused pane, but only takes over
         // from another terminal or from nothing: a tab being renamed keeps it.
         let responder = window.firstResponder
-        if let focused = state.focused, let terminal = host.terminal(focused), responder !== terminal,
-           responder == nil || responder === window || responder is TerminalSurfaceView {
-            window.makeFirstResponder(terminal)
+        if let focused = state.focused, let target = host.keyView(focused), responder !== target,
+           responder == nil || responder === window || responder is TerminalSurfaceView || responder is FocusReportingWebView {
+            window.makeFirstResponder(target)
         }
     }
 
-    private func place(_ node: Node?, in rect: NSRect, _ host: TerminalHost) {
+    private func place(_ node: Node?, in rect: NSRect, _ host: ContentHost) {
         switch node {
         case nil: return
         case .pane(let id):

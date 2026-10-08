@@ -16,6 +16,8 @@ public struct KmuxError: Error, Equatable {
 public protocol PaneHost: AnyObject {
     func start(_ pane: Pane)
     func stop(_ pane: Pane)
+    /// Types `text` into a running terminal pane and presses Return.
+    func send(_ pane: Pane, text: String)
 }
 
 /// Handles control-protocol requests (docs/kmux-spec.md §7) against the model.
@@ -46,7 +48,7 @@ public final class Core {
         onChange()
     }
 
-    private func settled(_ pane: Pane) async {
+    func settled(_ pane: Pane) async {
         guard pane.state == .starting else { return }
         let id = pane.id
         let timeout = Task { [startTimeout] in
@@ -77,7 +79,7 @@ public final class Core {
     private func run(_ cmd: String, _ args: JSON) async throws -> [String: JSON] {
         switch cmd {
         case "capabilities":
-            return ["mux": "kmux", "paneTypes": ["term"], "commands": .array(Self.commands.sorted().map(JSON.string)), "features": ["windows", "tabs", "fractionalSizing", "namedPanes", "zoom", "lifecycle"]]
+            return ["mux": "kmux", "paneTypes": ["term", "web"], "commands": .array(Self.commands.sorted().map(JSON.string)), "features": ["windows", "tabs", "fractionalSizing", "namedPanes", "zoom", "lifecycle"]]
         case "open": return try await open(args)
         case "list": return list()
         case "close": return try close(args)
@@ -85,6 +87,12 @@ public final class Core {
         case "zoom": return try zoom(args)
         case "restart": return try await restart(args)
         case "rename-tab": return try renameTab(args)
+        case "move": return try move(args)
+        case "move-tab": return try moveTab(args)
+        case "resize": return try resize(args)
+        case "arrange": return try arrange(args)
+        case "send": return try send(args)
+        case "navigate": return try await navigate(args)
         default:
             guard let extra = extraCommands[cmd] else { throw KmuxError("bad_request", "unknown command \"\(cmd)\"") }
             return try await extra(args)
@@ -92,7 +100,10 @@ public final class Core {
     }
 
     /// The commands this core handles, besides `extraCommands`.
-    public static let commands: Set<String> = ["capabilities", "open", "list", "close", "focus", "zoom", "restart", "rename-tab"]
+    public static let commands: Set<String> = [
+        "capabilities", "open", "list", "close", "focus", "zoom", "restart", "rename-tab",
+        "move", "move-tab", "resize", "arrange", "send", "navigate",
+    ]
 
     public func needPane(_ ref: String?) throws -> Pane {
         guard let ref else { throw KmuxError("bad_request", "missing pane") }
@@ -113,7 +124,8 @@ public final class Core {
     private func open(_ args: JSON) async throws -> [String: JSON] {
         let typeName = args["type"]?.string ?? ""
         guard let type = PaneType(rawValue: typeName) else { throw KmuxError("bad_request", "unknown pane type \"\(typeName)\" (term, web or ios)") }
-        guard type == .term else { throw KmuxError("bad_request", "\(type.rawValue) panes are not supported yet") }
+        guard type != .ios else { throw KmuxError("bad_request", "ios panes are not supported yet") }
+        if type == .web, args["url"]?.string?.isEmpty ?? true { throw KmuxError("bad_request", "web panes need a url") }
         let name = args["name"]?.string
         if let name, model.pane(name) != nil { throw KmuxError("name_taken", "a pane named \"\(name)\" already exists") }
         let split = args["split"]?.string ?? "auto"
@@ -125,6 +137,7 @@ public final class Core {
         let pane = model.makePane(type: type, name: name)
         pane.command = args["cmd"]?.string
         pane.cwd = args["cwd"]?.string
+        pane.url = args["url"]?.string.map(Self.normalizeURL)
         place(pane.id, in: window, split: split, size: size, newTab: args["tab"]?.bool ?? false)
         window.focused = pane.id
         window.activeTab?.lastFocus = pane.id
@@ -281,7 +294,7 @@ public final class Core {
         waiters.removeValue(forKey: pane.id)?.forEach { $0.resume() }
     }
 
-    private func fraction(_ value: JSON) throws -> Double {
+    func fraction(_ value: JSON) throws -> Double {
         guard let result = Fraction.parse(value) else { throw KmuxError("bad_request", "\"\(value)\" is not a fraction") }
         return result
     }

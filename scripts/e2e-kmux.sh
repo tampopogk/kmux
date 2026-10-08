@@ -72,6 +72,36 @@ set -e
 "$cli" close p1 >/dev/null
 [[ "$(field windows <<<"$("$cli" list --json)")" == '[]' ]] || fail "the window should close with its last pane"
 
+# 5b. send types a line into a terminal.
+"$cli" open --name sh >/dev/null
+sleep 1
+"$cli" send sh "echo SENT-\$((40+2))"
+sleep 1
+drawn sent "SENT-42"
+
+# 5c. A web pane opened before its server is up waits, then loads.
+port=$((20000 + $$ % 20000))
+"$cli" open web "localhost:$port" --name site --split down >/dev/null
+sleep 1.5
+web() { raw "{\"id\":1,\"cmd\":\"debug.web\",\"args\":{\"pane\":\"site\"}}"; }
+mkdir -p "$out/site" && echo '<h1>KMUX WEB OK</h1>' > "$out/site/index.html"
+(cd "$out/site" && exec python3 -m http.server "$port" --bind 127.0.0.1 >/dev/null 2>&1) &
+server_pid=$!
+trap 'kill $kmux_pid $server_pid 2>/dev/null || true; rm -f "$KMUX_SOCKET"' EXIT
+for _ in $(seq 30); do [[ "$(field text <<<"$(web)")" == *"KMUX WEB OK"* ]] && break; sleep 0.5; done
+[[ "$(field text <<<"$(web)")" == *"KMUX WEB OK"* ]] || fail "web pane never loaded: $(web)"
+"$cli" navigate site "localhost:$port/missing" >/dev/null
+[[ "$(field panes.1.url <<<"$("$cli" list --json)")" == "http://localhost:$port/missing" ]] || fail "navigate should update the url"
+
+# 5d. Layout commands move real views: swap, resize, arrange.
+"$cli" move sh --to site >/dev/null
+"$cli" arrange '{"split":"row","children":[{"pane":"site","size":"1/4"},{"pane":"sh"}]}' >/dev/null
+[[ "$(field windows.0.tabs.0.layout <<<"$("$cli" list --json)")" == '{"children": [{"pane": "site", "size": "1/4"}, {"pane": "sh", "size": "3/4"}], "split": "row"}' ]] \
+  || fail "arrange: $(field windows.0.tabs.0.layout <<<"$("$cli" list --json)")"
+"$cli" resize site 1/2 >/dev/null
+drawn arranged "*"
+"$cli" close --window w2 >/dev/null
+
 # 6. Keyboard shortcuts, pressed through AppKit's key-event path.
 key() { raw "{\"id\":1,\"cmd\":\"debug.key\",\"args\":{\"key\":\"$1\"}}" >/dev/null; sleep 0.4; }
 state() { "$cli" list --json; }
@@ -79,12 +109,12 @@ state() { "$cli" list --json; }
 key "cmd+d"
 key "cmd+shift+d"
 layout="$(field windows.0.tabs.0.layout <<<"$(state)")"
-[[ "$layout" == '{"children": [{"pane": "k1", "size": "1/2"}, {"children": [{"pane": "p5", "size": "1/2"}, {"pane": "p6", "size": "1/2"}], "size": "1/2", "split": "column"}], "split": "row"}' ]] \
+[[ "$layout" == '{"children": [{"pane": "k1", "size": "1/2"}, {"children": [{"pane": "p7", "size": "1/2"}, {"pane": "p8", "size": "1/2"}], "size": "1/2", "split": "column"}], "split": "row"}' ]] \
   || fail "cmd+d / cmd+shift+d layout: $layout"
-[[ "$(field windows.0.focused <<<"$(state)")" == p6 ]] || fail "the new pane should take focus"
+[[ "$(field windows.0.focused <<<"$(state)")" == p8 ]] || fail "the new pane should take focus"
 key "cmd+]"; [[ "$(field windows.0.focused <<<"$(state)")" == k1 ]] || fail "cmd+] should wrap to k1"
-key "cmd+["; [[ "$(field windows.0.focused <<<"$(state)")" == p6 ]] || fail "cmd+[ should wrap back to p6"
-key "cmd+shift+return"; [[ "$(field windows.0.zoomed <<<"$(state)")" == p6 ]] || fail "cmd+shift+return should zoom"
+key "cmd+["; [[ "$(field windows.0.focused <<<"$(state)")" == p8 ]] || fail "cmd+[ should wrap back to p8"
+key "cmd+shift+return"; [[ "$(field windows.0.zoomed <<<"$(state)")" == p8 ]] || fail "cmd+shift+return should zoom"
 key "cmd+["; [[ "$(field windows.0.zoomed <<<"$(state)")" == None ]] || fail "moving focus should unzoom"
 sleep 1
 drawn three-panes "*" 3

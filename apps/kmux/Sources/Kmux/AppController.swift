@@ -7,18 +7,19 @@ import KmuxCore
 @MainActor
 final class AppController: NSObject, NSApplicationDelegate {
     private let core = Core()
-    private var host: TerminalHost!
+    private var host: ContentHost!
     private var server: SocketServer?
     private var controllers: [String: WindowController] = [:]
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         do {
-            host = TerminalHost(runtime: try GhosttyRuntime())
+            host = ContentHost(runtime: try GhosttyRuntime())
         } catch {
             fatal("kmux: \(error.localizedDescription)")
         }
         host.core = core
         host.onFocus = { [weak self] id in self?.focused(id) }
+        host.onNavigate = { [weak self] id, url in self?.request(["cmd": "navigate", "args": ["pane": .string(id), "url": .string(url)]]) }
         host.onCloseRequest = { [weak self] id in self?.request(["cmd": "close", "args": ["pane": .string(id)]]) }
         core.host = host
         core.onChange = { [weak self] in self?.sync() }
@@ -29,6 +30,11 @@ final class AppController: NSObject, NSApplicationDelegate {
         core.extraCommands["debug.snapshot"] = { [weak self] args in try self?.snapshot(args) ?? [:] }
         core.extraCommands["debug.key"] = { [weak self] args in try self?.pressKey(args) ?? [:] }
         core.extraCommands["debug.click"] = { [weak self] args in try self?.click(args) ?? [:] }
+        core.extraCommands["debug.web"] = { [weak self] args in
+            guard let self, let web = try host.web(core.needPane(args["pane"]?.string).id) else { throw KmuxError("wrong_type", "not a web pane") }
+            let text = try? await web.webView.evaluateJavaScript("document.body ? document.body.innerText : ''") as? String
+            return ["url": web.webView.url.map { .string($0.absoluteString) } ?? nil, "text": .string(text ?? "")]
+        }
         core.extraCommands["debug.menu"] = { _ in
             let items = (NSApp.mainMenu?.items ?? []).flatMap { top in
                 (top.submenu?.items ?? []).filter { !$0.isSeparatorItem }.map { item -> JSON in
@@ -137,10 +143,32 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     @objc func splitRight() { split("right") }
     @objc func splitDown() { split("down") }
-    private func split(_ direction: String) {
-        var args: [String: JSON] = ["type": "term", "split": .string(direction)]
+    @objc func webRight() { split("right", web: true) }
+    @objc func webDown() { split("down", web: true) }
+
+    /// ⌘L: edit the focused web pane's URL.
+    @objc func openURL() {
+        guard let pane = focusedPane else { return }
+        host.web(pane)?.editURL()
+    }
+
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if item.action == #selector(openURL) { return focusedPane.flatMap { host.web($0) } != nil }
+        return true
+    }
+
+    private func split(_ direction: String, web: Bool = false) {
+        var args: [String: JSON] = web ? ["type": "web", "url": "http://localhost:3000", "split": .string(direction)] : ["type": "term", "split": .string(direction)]
         if let window = keyWindow?.id { args["window"] = .string(window) }
-        request(["cmd": "open", "args": .object(args)])
+        guard web else {
+            request(["cmd": "open", "args": .object(args)])
+            return
+        }
+        // As in the model: a new web pane starts with its URL selected for editing.
+        Task { @MainActor in
+            let reply = await core.handle(["cmd": "open", "args": .object(args)])
+            if let id = reply["pane"]?["id"]?.string { host.web(id)?.editURL() }
+        }
     }
 
     @objc func nextPane() { cyclePane(1) }
@@ -256,6 +284,9 @@ final class AppController: NSObject, NSApplicationDelegate {
         _ = menu("Pane", [
             ("Split Right", #selector(splitRight), "new_split:right", .cmd("d")),
             ("Split Down", #selector(splitDown), "new_split:down", .shiftCmd("d")),
+            ("New Web Pane Right", #selector(webRight), nil, nil),
+            ("New Web Pane Below", #selector(webDown), nil, nil),
+            ("Open URL…", #selector(openURL), nil, .cmd("l")),
             nil,
             ("Next Pane", #selector(nextPane), "goto_split:next", .cmd("]")),
             ("Previous Pane", #selector(previousPane), "goto_split:previous", .cmd("[")),

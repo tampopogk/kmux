@@ -1,14 +1,16 @@
 import AppKit
 import KmuxCore
 
-/// Runs pane contents: Ghostty terminals for `term` panes.
+/// Runs pane contents: Ghostty terminals for `term` panes and web views for
+/// `web` panes, and reports their lifecycle to the core.
 @MainActor
-final class TerminalHost: PaneHost {
+final class ContentHost: PaneHost {
     let runtime: GhosttyRuntime
     weak var core: Core?
     private(set) var views: [String: PaneView] = [:]
     var onFocus: ((String) -> Void)?
     var onCloseRequest: ((String) -> Void)?
+    var onNavigate: ((String, String) -> Void)?
 
     init(runtime: GhosttyRuntime) {
         self.runtime = runtime
@@ -23,14 +25,29 @@ final class TerminalHost: PaneHost {
     }
 
     func terminal(_ id: String) -> TerminalSurfaceView? { views[id]?.content as? TerminalSurfaceView }
+    func web(_ id: String) -> WebPaneView? { views[id]?.content as? WebPaneView }
+
+    /// The view that should have the keyboard when the pane is focused.
+    func keyView(_ id: String) -> NSView? { terminal(id) ?? web(id)?.webView }
 
     func start(_ pane: Pane) {
         let id = pane.id
-        let terminal = TerminalSurfaceView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
-        terminal.onFocus = { [weak self] in self?.onFocus?(id) }
-        let view = PaneView(id: id, content: terminal)
-        views[id] = view
-        let started = runtime.attach(terminal, command: pane.command, cwd: pane.cwd)
+        let content: NSView
+        var started = true
+        switch pane.type {
+        case .web:
+            let web = WebPaneView(url: pane.url ?? "about:blank")
+            web.onFocus = { [weak self] in self?.onFocus?(id) }
+            web.onNavigate = { [weak self] url in self?.onNavigate?(id, url) }
+            web.onURLChange = { [weak self] url in self?.core?.model.panes[id]?.url = url }
+            content = web
+        default:
+            let terminal = TerminalSurfaceView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+            terminal.onFocus = { [weak self] in self?.onFocus?(id) }
+            started = runtime.attach(terminal, command: pane.command, cwd: pane.cwd)
+            content = terminal
+        }
+        views[id] = PaneView(id: id, content: content)
         DispatchQueue.main.async { [weak self] in
             if started { self?.core?.update(id, state: .running) } else { self?.core?.update(id, state: .failed, error: "Ghostty could not create a terminal") }
         }
@@ -39,7 +56,12 @@ final class TerminalHost: PaneHost {
     func stop(_ pane: Pane) {
         guard let view = views.removeValue(forKey: pane.id) else { return }
         if let terminal = view.content as? TerminalSurfaceView { runtime.detach(terminal) }
+        (view.content as? WebPaneView)?.stop()
         view.removeFromSuperview()
+    }
+
+    func send(_ pane: Pane, text: String) {
+        terminal(pane.id)?.typeLine(text)
     }
 
     func paneID(of terminal: TerminalSurfaceView) -> String? {

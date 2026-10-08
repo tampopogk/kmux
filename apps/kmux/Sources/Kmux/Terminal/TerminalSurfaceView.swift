@@ -174,7 +174,19 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
         return result.text.map { String(cString: $0) } ?? ""
     }
 
-    /// Types `text` as a paste, for the `send` command.
+    /// Types `text` and presses Return, for the `send` command.
+    func typeLine(_ text: String) {
+        sendText(text)
+        guard let surface else { return }
+        var key = ghostty_input_key_s()
+        key.keycode = 36 // Return
+        for action in [GHOSTTY_ACTION_PRESS, GHOSTTY_ACTION_RELEASE] {
+            key.action = action
+            _ = ghostty_surface_key(surface, key)
+        }
+    }
+
+    /// Inserts `text` as committed input (Ghostty's paste path).
     func sendText(_ text: String) {
         guard let surface else { return }
         text.withCString { ghostty_surface_text(surface, $0, UInt(text.utf8.count)) }

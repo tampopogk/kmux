@@ -18,6 +18,9 @@ final class FakeHost: PaneHost {
     }
 
     func stop(_ pane: Pane) { stopped.append(pane.id) }
+
+    var sent: [String] = []
+    func send(_ pane: Pane, text: String) { sent.append("\(pane.id): \(text)") }
 }
 
 @MainActor
