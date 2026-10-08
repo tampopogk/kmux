@@ -54,6 +54,17 @@ final class AppController: NSObject, NSApplicationDelegate {
         core.extraCommands["debug.stats"] = { _ in
             ["pid": .number(Double(ProcessInfo.processInfo.processIdentifier)), "footprint": .number(Double(memoryFootprint()))]
         }
+        // iOS panes: tap at {x, y} (fractions of the screen) or press Home; replies with the screen's pixel size.
+        core.extraCommands["debug.ios"] = { [weak self] args in
+            guard let self, let screen = try host.ios(core.needPane(args["pane"]?.string).id)?.screen else { throw KmuxError("wrong_type", "not a running ios pane") }
+            if let x = args["x"]?.number, let y = args["y"]?.number {
+                screen.touch(.leftMouseDown, at: CGPoint(x: x, y: y))
+                try await Task.sleep(for: .milliseconds(80))
+                screen.touch(.leftMouseUp, at: CGPoint(x: x, y: y))
+            }
+            if args["home"]?.bool == true { screen.pressHome() }
+            return ["width": .number(screen.pixelSize.width), "height": .number(screen.pixelSize.height)]
+        }
         core.extraCommands["debug.drag"] = { [weak self] args in try await self?.debugDrag(args) ?? [:] }
         core.extraCommands["debug.web"] = { [weak self] args in
             guard let self, let web = try host.web(core.needPane(args["pane"]?.string).id) else { throw KmuxError("wrong_type", "not a web pane") }
@@ -180,6 +191,14 @@ final class AppController: NSObject, NSApplicationDelegate {
     @objc func splitDown() { split("down") }
     @objc func webRight() { split("right", web: true) }
     @objc func webDown() { split("down", web: true) }
+    /// As in the model, a new iOS pane starts with an app already there: Settings.
+    @objc func iosRight() { split("right", ios: true) }
+    @objc func iosDown() { split("down", ios: true) }
+
+    /// The Home button of the focused iOS pane's simulator.
+    @objc func pressHome() {
+        focusedPane.flatMap { host.ios($0)?.screen }?.pressHome()
+    }
 
     /// ⌘L: edit the focused web pane's URL.
     @objc func openURL() {
@@ -188,14 +207,17 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if item.action == #selector(pressHome) { return focusedPane.flatMap { host.ios($0)?.screen } != nil }
         if item.action == #selector(openURL) { return focusedPane.flatMap { host.web($0) } != nil }
         if item.action == #selector(goBack) { return !(focusedPane.flatMap { core.model.panes[$0]?.history?.back.isEmpty } ?? true) }
         if item.action == #selector(goForward) { return !(focusedPane.flatMap { core.model.panes[$0]?.history?.forward.isEmpty } ?? true) }
         return true
     }
 
-    private func split(_ direction: String, web: Bool = false) {
-        var args: [String: JSON] = web ? ["type": "web", "url": "http://localhost:3000", "split": .string(direction)] : ["type": "term", "split": .string(direction)]
+    private func split(_ direction: String, web: Bool = false, ios: Bool = false) {
+        var args: [String: JSON] = web ? ["type": "web", "url": "http://localhost:3000", "split": .string(direction)]
+            : ios ? ["type": "ios", "app": "com.apple.Preferences", "split": .string(direction), "wait": false]
+            : ["type": "term", "split": .string(direction)]
         if let window = keyWindow?.id { args["window"] = .string(window) }
         guard web else {
             request(["cmd": "open", "args": .object(args)])
@@ -569,9 +591,12 @@ final class AppController: NSObject, NSApplicationDelegate {
             ("Split Down", #selector(splitDown), "new_split:down", .shiftCmd("d")),
             ("New Web Pane Right", #selector(webRight), nil, nil),
             ("New Web Pane Below", #selector(webDown), nil, nil),
+            ("New iOS Pane Right", #selector(iosRight), nil, nil),
+            ("New iOS Pane Below", #selector(iosDown), nil, nil),
             ("Open URL…", #selector(openURL), nil, .cmd("l")),
             ("Back", #selector(goBack), nil, nil),
             ("Forward", #selector(goForward), nil, nil),
+            ("Home", #selector(pressHome), nil, .shiftCmd("h")),
             nil,
             ("Next Pane", #selector(nextPane), "goto_split:next", .cmd("]")),
             ("Previous Pane", #selector(previousPane), "goto_split:previous", .cmd("[")),

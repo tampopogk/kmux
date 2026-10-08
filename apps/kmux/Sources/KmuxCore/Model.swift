@@ -14,6 +14,10 @@ public final class Pane {
     public var command: String?
     public var cwd: String?
     public var url: String?
+    /// iOS panes: the app (a .app path or a bundle ID) and the simulator
+    /// device it runs on (a name or UDID; the host fills in the one it chose).
+    public var app: String?
+    public var device: String?
     /// Back/forward history, kept only for web panes opened with `history: true`.
     public var history: History?
 
@@ -275,6 +279,10 @@ public final class Model {
         if pane.type == .web {
             out["url"] = pane.url.map(JSON.string) ?? .null
             out["history"] = .bool(pane.history != nil)
+        }
+        if pane.type == .ios {
+            out["app"] = pane.app.map(JSON.string) ?? .null
+            out["device"] = pane.device.map(JSON.string) ?? .null
         }
         if let code = pane.exitCode { out["exitCode"] = .number(Double(code)) }
         if let error = pane.error { out["error"] = .string(error) }

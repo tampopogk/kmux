@@ -32,6 +32,10 @@ Facebook's idb uses, and the protocols involved (`SimDisplayIOSurfaceRenderable`
 | Tap → first screen update (app launch animation) | 35–39 ms (3 runs) |
 | The window behind other apps | still updates, so a background kmux keeps showing it |
 
+Since Xcode 27, SimulatorKit is in `Xcode.app/Contents/SharedFrameworks`
+(it was in `Contents/Developer/Library/PrivateFrameworks`); the symbols are
+the same. The real pane (`apps/kmux/Sources/SimBridge`) looks in both.
+
 ## Not covered yet (for the real ios pane)
 
 - Booting from kmux (CoreSimulator `bootWithOptions:error:`, or `simctl boot`), installing and launching the app (`simctl install` / `launch`), failing with the list of devices.

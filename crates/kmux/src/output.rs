@@ -23,6 +23,12 @@ fn state(pane: &Value) -> String {
     }
 }
 
+/// The first line of `text`, cut to fit a table column.
+fn brief(text: &str) -> String {
+    let line = text.lines().next().unwrap_or("");
+    if line.chars().count() > 60 { format!("{}…", line.chars().take(59).collect::<String>()) } else { line.to_string() }
+}
+
 pub fn opened(_: &Value, reply: &Value) -> String {
     format!(
         "opened {} in window {}, tab {}: {}",
@@ -42,9 +48,20 @@ pub fn closed(args: &Value, reply: &Value) -> String {
     }
 }
 
+/// What a pane shows: its command, its URL, or its app on a device.
+fn what(pane: &Value) -> Option<String> {
+    if let Some(app) = pane["app"].as_str() {
+        return Some(match pane["device"].as_str() {
+            Some(device) => format!("{app} on {device}"),
+            None => app.into(),
+        });
+    }
+    pane["cmd"].as_str().or(pane["url"].as_str()).map(String::from)
+}
+
 pub fn pane_state(reply: &Value) -> String {
     let pane = &reply["pane"];
-    let what = pane["cmd"].as_str().or(pane["url"].as_str()).map(|c| format!(" ({c})")).unwrap_or_default();
+    let what = what(pane).map(|c| format!(" ({c})")).unwrap_or_default();
     format!("{}{what} is {}", label(pane), state(pane))
 }
 
@@ -103,8 +120,8 @@ pub fn list(reply: &Value) -> String {
             pane["id"].as_str().unwrap_or("?").into(),
             pane["name"].as_str().unwrap_or("-").into(),
             pane["type"].as_str().unwrap_or("?").into(),
-            state(pane),
-            pane["cmd"].as_str().or(pane["url"].as_str()).unwrap_or("(shell)").into(),
+            brief(&state(pane)),
+            what(pane).unwrap_or_else(|| "(shell)".into()),
         ]);
     }
     let widths: Vec<usize> = (0..5).map(|i| rows.iter().map(|r| r[i].chars().count()).max().unwrap_or(0)).collect();

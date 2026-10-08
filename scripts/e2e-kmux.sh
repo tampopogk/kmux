@@ -208,4 +208,22 @@ for _ in $(seq 50); do [[ "$("$cli" --instance "$other" list)" == *child* ]] && 
 kill "$other_pid"; wait "$other_pid" 2>/dev/null || true
 [[ ! -e "$other_socket" ]] || fail "instance $other should remove its socket when it quits"
 
+# 9. iOS panes: the simulator's screen in a pane, with taps and Home.
+# Boots a simulator if none is (it stays booted). KMUX_E2E_IOS=0 skips this.
+if [[ "${KMUX_E2E_IOS:-1}" != 0 ]] && xcrun simctl list devices available 2>/dev/null | grep -q iPhone; then
+  bad="$("$cli" open ios --app com.apple.Preferences --device "No Such Phone" 2>&1)" && fail "an unknown device should fail"
+  [[ "$bad" == *'Unknown device "No Such Phone"'*Available:* ]] || fail "an unknown device should list the available ones: $bad"
+  "$cli" open ios --name phone --app com.apple.Preferences --window new >/dev/null || fail "the ios pane did not start"
+  phone="$(field pane.id <<<"$("$cli" restart phone --json)")"
+  [[ "$(field width <<<"$(raw "{\"id\":1,\"cmd\":\"debug.ios\",\"args\":{\"pane\":\"phone\"}}")")" != 0 ]] || fail "the ios pane shows no screen"
+  sleep 3
+  ink() { field panes.0.ink <<<"$(raw "{\"id\":1,\"cmd\":\"debug.snapshot\",\"args\":{\"path\":\"$out/ios-$1.png\"}}")"; }
+  settings="$(ink settings)"
+  python3 -c "import sys; sys.exit(float(sys.argv[1]) < 0.05)" "$settings" || fail "the ios pane is blank (ink $settings)"
+  raw "{\"id\":1,\"cmd\":\"debug.ios\",\"args\":{\"pane\":\"phone\",\"home\":true}}" >/dev/null
+  sleep 2
+  [[ "$(ink home)" != "$settings" ]] || fail "Home did not change the screen"
+  "$cli" close "$phone" >/dev/null
+fi
+
 echo "e2e OK (snapshot: $out/two-panes.png)"

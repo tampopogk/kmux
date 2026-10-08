@@ -28,8 +28,8 @@ pub static COMMANDS: &[Command] = &[
     Command {
         name: "open",
         group: "Panes",
-        summary: "Open a terminal pane (or a web pane) and wait until it is running.",
-        usage: "kmux open [term] [--cmd CMD] [--cwd DIR] [--name NAME] [--split right|down|auto] [--size FRACTION] [--tab] [--window ID|new] [--no-wait]\n       kmux open web URL [--history] [same placement options]",
+        summary: "Open a terminal, web or iOS pane and wait until it is running.",
+        usage: "kmux open [term] [--cmd CMD] [--cwd DIR] [--name NAME] [--split right|down|auto] [--size FRACTION] [--tab] [--window ID|new] [--no-wait]\n       kmux open web URL [--history] [same placement options]\n       kmux open ios --app APP [--device DEVICE] [same placement options]",
         options: &[
             ("--cmd CMD", "Shell command line to run in your login shell, e.g. \"npm run dev\". Put it in single quotes if it uses $VARS or ;, so your own shell leaves it alone. Default: an interactive shell."),
             ("--cwd DIR", "Working directory."),
@@ -39,6 +39,8 @@ pub static COMMANDS: &[Command] = &[
             ("--tab", "Open in a new tab instead of splitting."),
             ("--window ID|new", "Open in that window, or a new one. Default: the key (front) window."),
             ("--no-wait", "Return as soon as the pane exists instead of waiting until it is running."),
+            ("--app APP", "iOS panes: a .app built for the simulator (installed, then launched) or the bundle ID of an installed app, e.g. com.apple.Preferences."),
+            ("--device DEVICE", "iOS panes: a simulator device name or UDID, e.g. \"iPhone 16\". Default: a booted iPhone, else the newest one. The device is booted if needed (this can take a minute) and stays booted after the pane closes."),
             ("--history", "Web panes only: keep back/forward history (off by default), for `kmux navigate PANE --back` and the Pane menu's Back and Forward."),
         ],
         notes: "Prints the new pane's ID and name. A pane whose command exits stays on screen as `exited`.",
@@ -48,6 +50,7 @@ pub static COMMANDS: &[Command] = &[
             ("kmux open --tab", "Open a shell in a new tab."),
             ("kmux open --name build --split down --size 1/4 --cmd 'for i in 1 2 3; do echo step $i; done'", "A quarter-height pane below, running a loop."),
             ("kmux open --window new --name scratch", "Open a shell in a new window."),
+            ("kmux open ios --name phone --app build/MyApp.app --split right --size 1/3", "Run your app in the simulator, in the right third."),
         ],
         parse: parse_open,
         show: output::opened,
@@ -333,6 +336,15 @@ fn parse_open(args: &mut Args) -> Result<Value, Failure> {
             out.insert(key.into(), json!(value));
         }
     }
+    // A relative .app path means one relative to here, not to kmux.
+    if let Some(Value::String(app)) = out.get("app") {
+        let path = std::path::Path::new(app);
+        if path.is_relative() && path.exists() {
+            if let Ok(full) = std::fs::canonicalize(path) {
+                out.insert("app".into(), json!(full.to_string_lossy()));
+            }
+        }
+    }
     if args.flag("--tab") {
         out.insert("tab".into(), json!(true));
     }
@@ -344,12 +356,18 @@ fn parse_open(args: &mut Args) -> Result<Value, Failure> {
         None => "term".to_string(),
         Some(kind) if ["term", "web", "ios"].contains(&kind.as_str()) => kind,
         Some(other) => {
-            return Err(usage("open", &format!("unknown pane type \"{other}\" (term or web). To run a command use --cmd \"{other}\"")));
+            return Err(usage("open", &format!("unknown pane type \"{other}\" (term, web or ios). To run a command use --cmd \"{other}\"")));
         }
     };
     if kind == "web" {
         let url = args.positional().ok_or_else(|| usage("open", "web panes need a URL: kmux open web URL"))?;
         out.insert("url".into(), json!(url));
+    }
+    if kind == "ios" && !out.contains_key("app") {
+        return Err(usage("open", "iOS panes need an app: kmux open ios --app MyApp.app (or a bundle ID)"));
+    }
+    if kind != "ios" && (out.contains_key("app") || out.contains_key("device")) {
+        return Err(usage("open", "--app and --device are only for iOS panes: kmux open ios --app APP"));
     }
     if history {
         if kind != "web" {

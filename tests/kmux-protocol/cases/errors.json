@@ -10,6 +10,8 @@
       { "send": { "cmd": "open", "args": { "type": "term", "size": "lots" } }, "expect": { "ok": false, "error": { "code": "bad_request" } } },
       { "send": { "cmd": "open", "args": { "type": "term", "split": "sideways" } }, "expect": { "ok": false, "error": { "code": "bad_request" } } },
       { "send": { "cmd": "open", "args": { "type": "term", "window": "w9" } }, "expect": { "ok": false, "error": { "code": "not_found" } } },
+      { "send": { "cmd": "open", "args": { "type": "ios" } }, "expect": { "ok": false, "error": { "code": "bad_request" } } },
+      { "send": { "cmd": "open", "args": { "type": "term", "app": "Foo.app" } }, "expect": { "ok": false, "error": { "code": "bad_request" } } },
       { "send": { "cmd": "close", "args": { "pane": "zzz" } }, "expect": { "ok": false, "error": { "code": "not_found" } } },
       { "send": { "cmd": "close" }, "expect": { "ok": false, "error": { "code": "bad_request" } } },
       { "send": { "cmd": "focus" }, "expect": { "ok": false, "error": { "code": "bad_request" } } },

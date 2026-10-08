@@ -332,6 +332,7 @@ async function handle(req) {
         if (type === 'web' && !args.url) throw kerr('bad_request', 'web panes need a url');
         if (args.history != null && type !== 'web') throw kerr('bad_request', 'history is only for web panes');
         if (type === 'ios' && !args.app) throw kerr('bad_request', 'ios panes need an app');
+        if ((args.app != null || args.device != null) && type !== 'ios') throw kerr('bad_request', 'app and device are only for ios panes');
         const w = targetWin(args.window);
         const p = createPane(type, args);
         place(p.id, w, { split: args.split || 'auto', size, tab: !!args.tab });

@@ -1,6 +1,6 @@
 # kmux — Specification
 
-> **Status:** v0.6 · **Last updated:** 2026-10-08
+> **Status:** v0.7 · **Last updated:** 2026-10-09
 >
 > **Reference model:** [`reference/kmux/index.html`](../reference/kmux/index.html). Open it in a browser and try it.
 > The model is the source of truth for kmux's design and behaviour. This document summarises what the model shows and lists what it doesn't answer yet. If the two disagree, the model wins, and this document should be fixed.
@@ -154,7 +154,7 @@ kmux launches in front by default. With `--bg` (on the app or the CLI, or `KMUX_
 |------|-------|------------------------|
 | `term` | A shell or command, in a Ghostty terminal | Runs `cmd` if given. Ctrl+C interrupts. `exit [code]` moves the pane to **exited** and shows the code. |
 | `web` | A web page | No address bar. **Open URL** (⌘L) shows a floating address field. A `localhost` URL whose server isn't up shows "Waiting for …" and loads once the server responds. No back/forward history unless the pane is opened with `history` (`kmux open web URL --history`); then **Back** and **Forward** in the Pane menu and `navigate` with `back` or `forward` move through it. |
-| `ios` | An app in the native iOS Simulator | Shows "Booting \<device\>…", then the app. Clicks are forwarded to the simulator. An unknown device fails and lists the available devices. |
+| `ios` | An app in the native iOS Simulator | Shows "Booting \<device\>…", then the app, with the device and app named below the screen. Clicks and drags are sent as touches; **Home** (⇧⌘H) presses the Home button. An unknown device fails and lists the available devices. `app` is a `.app` built for the simulator (installed, then launched) or an installed app's bundle ID. Without a `device`, kmux uses a booted iPhone, else the newest one. The simulator stays booted when the pane closes, and `restart` relaunches the app. |
 
 ![Open URL (⌘L) on a web pane](img/kmux/open-url.png)
 
@@ -174,7 +174,7 @@ stateDiagram-v2
     closed --> [*]
 ```
 
-`open`, `restart` and `navigate` wait until the pane is **running** or **failed** before replying, unless the request sets `wait: false`.
+`open`, `restart` and `navigate` wait until the pane is **running** or **failed** before replying, unless the request sets `wait: false`. A pane that hasn't started within 10 s fails; an `ios` pane gets 3 minutes, since booting a simulator can take that long.
 
 ---
 
@@ -186,10 +186,11 @@ The menu bar has **Pane**, **View** and **Window** menus. Right-clicking a pane 
 |--------|----------|-----------------|
 | Split right (new terminal) | ⌘D | Pane menu |
 | Split down (new terminal) | ⇧⌘D | Pane menu |
-| New web / iOS pane right or below | — | Pane menu |
+| New web / iOS pane right or below (an iOS pane opens Settings) | — | Pane menu |
 | Next / previous pane | ⌘] / ⌘[ | Pane menu |
 | Open URL (web panes) | ⌘L | Pane menu |
 | Back / forward (web panes opened with history) | — | Pane menu |
+| Home button (iOS panes) | ⇧⌘H | Pane menu |
 | Zoom / unzoom | ⇧⌘↩ | Pane menu |
 | Move pane to new window | — | Pane menu |
 | Restart | ⌘R | Pane menu |
@@ -327,7 +328,7 @@ $ kmux instances
 |-------|----------|
 | Platform | A native macOS app (AppKit). |
 | Terminal | Ghostty (GhosttyKit), reusing kanna-v3's build pipeline and terminal view. Start from **upstream Ghostty**: kanna-v3's fork existed to stream terminals from a daemon, and kmux has no persisted terminals for now. |
-| iOS pane | The iOS Simulator's screen is **embedded in the pane** with native UI, not a separate Simulator window placed over it. A spike (`spikes/ios-sim`) shows this works: the device's framebuffer IOSurface in a layer, clicks sent as touches, up to 61 frames/s, 35–39 ms from tap to screen update. **Deferred:** not part of the first native builds. |
+| iOS pane | The iOS Simulator's screen is **embedded in the pane** with native UI, not a separate Simulator window placed over it. A spike (`spikes/ios-sim`) shows this works: the device's framebuffer IOSurface in a layer, clicks sent as touches, up to 61 frames/s, 35–39 ms from tap to screen update. Built in v0.7: `simctl` boots devices and installs and launches apps; Xcode's private CoreSimulator and SimulatorKit frameworks give the screen and touches, and a pane fails with a clear message if they change shape in a new Xcode. Not yet: the keyboard, edge swipes (use Home), two-finger gestures, rotation. |
 | Transport | A **persistent connection** over the Unix socket: a client keeps one connection open and sends many requests over it. Messages are **newline-delimited JSON** (one request or reply per line), answered in order. Each instance has its own socket in `~/Library/Application Support/kmux/` (`kmux.sock` for the default instance), or `$KMUX_SOCKET`, readable only by the user. |
 | Shortcuts | Come from the user's **Ghostty config**, as in kanna-v3, with the shortcuts in [section 5](#5-menus-and-shortcuts) as defaults. |
 | Pane commands | A `term` pane's `cmd` is a shell command line, run by the user's login shell. |
