@@ -14,6 +14,8 @@ final class ContentHost: PaneHost {
     var onFocus: ((String) -> Void)?
     var onCloseRequest: ((String) -> Void)?
     var onNavigate: ((String, String) -> Void)?
+    /// A markdown pane followed a link to another markdown file.
+    var onOpenMarkdown: ((String, String) -> Void)?
     /// The pane's ⋯ grip was pressed: a drag to move the pane begins.
     var onPaneDrag: ((String, NSEvent) -> Void)?
     /// The Pane menu, for right-clicks (acting on the pane, which takes focus first).
@@ -34,15 +36,29 @@ final class ContentHost: PaneHost {
     func terminal(_ id: String) -> TerminalSurfaceView? { views[id]?.content as? TerminalSurfaceView }
     func web(_ id: String) -> WebPaneView? { views[id]?.content as? WebPaneView }
     func ios(_ id: String) -> IosPaneView? { views[id]?.content as? IosPaneView }
+    func markdown(_ id: String) -> MarkdownPaneView? { views[id]?.content as? MarkdownPaneView }
 
     /// The view that should have the keyboard when the pane is focused.
-    func keyView(_ id: String) -> NSView? { terminal(id) ?? web(id)?.webView ?? ios(id) }
+    func keyView(_ id: String) -> NSView? { terminal(id) ?? web(id)?.webView ?? ios(id) ?? markdown(id)?.webView }
 
     func start(_ pane: Pane) {
         let id = pane.id
         let content: NSView
         var started = true
+        var failure = "Ghostty could not create a terminal"
         switch pane.type {
+        case .md:
+            let path = Self.absolute(pane.path ?? "")
+            let markdown = MarkdownPaneView(path: path)
+            markdown.onFocus = { [weak self] in self?.onFocus?(id) }
+            markdown.onOpenMarkdown = { [weak self] target in self?.onOpenMarkdown?(id, target) }
+            markdown.webView.contextMenu = { [weak self] in self?.contextMenu?() }
+            content = markdown
+            var directory: ObjCBool = false
+            if !FileManager.default.fileExists(atPath: path, isDirectory: &directory) || directory.boolValue {
+                started = false
+                failure = directory.boolValue ? "\(path) is a folder, not a markdown file" : "No such file: \(path)"
+            }
         case .web:
             let web = WebPaneView(url: pane.url ?? "about:blank")
             web.onFocus = { [weak self] in self?.onFocus?(id) }
@@ -69,7 +85,7 @@ final class ContentHost: PaneHost {
         views[id] = view
         guard pane.type != .ios else { return }
         DispatchQueue.main.async { [weak self] in
-            if started { self?.core?.update(id, state: .running) } else { self?.core?.update(id, state: .failed, error: "Ghostty could not create a terminal") }
+            if started { self?.core?.update(id, state: .running) } else { self?.core?.update(id, state: .failed, error: failure) }
         }
     }
 
@@ -112,11 +128,19 @@ final class ContentHost: PaneHost {
         if let terminal = view.content as? TerminalSurfaceView { runtime.detach(terminal) }
         (view.content as? WebPaneView)?.stop()
         (view.content as? IosPaneView)?.stop()
+        (view.content as? MarkdownPaneView)?.stop()
         view.removeFromSuperview()
     }
 
     func send(_ pane: Pane, text: String) {
         terminal(pane.id)?.typeLine(text)
+    }
+
+    /// A path from a client: `~` expanded; relative paths are relative to home
+    /// (the CLI sends absolute paths).
+    static func absolute(_ path: String) -> String {
+        let expanded = (path as NSString).expandingTildeInPath
+        return expanded.hasPrefix("/") ? expanded : (NSHomeDirectory() as NSString).appendingPathComponent(expanded)
     }
 
     func paneID(of terminal: TerminalSurfaceView) -> String? {

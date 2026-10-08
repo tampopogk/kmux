@@ -208,6 +208,43 @@ for _ in $(seq 50); do [[ "$("$cli" --instance "$other" list)" == *child* ]] && 
 kill "$other_pid"; wait "$other_pid" 2>/dev/null || true
 [[ ! -e "$other_socket" ]] || fail "instance $other should remove its socket when it quits"
 
+# 8b. Markdown panes: rendered with diagrams, live reload, links, a missing file.
+mkdir -p "$out/docs"
+cat > "$out/docs/spec.md" <<'MD'
+# KMUX MD OK
+
+Some **bold** text and a table:
+
+| a | b |
+|---|---|
+| 1 | 2 |
+
+```mermaid
+flowchart LR
+    A[cart] --> B[paid]
+```
+
+See [the other page](other.md).
+MD
+echo '# OTHER PAGE' > "$out/docs/other.md"
+mdw="$(field window <<<"$("$cli" open md "$out/docs/spec.md" --name doc --window new --json)")"
+mdtext() { field text <<<"$(raw "{\"id\":1,\"cmd\":\"debug.web\",\"args\":{\"pane\":\"doc\"}}")"; }
+for _ in $(seq 40); do [[ "$(mdtext)" == *"KMUX MD OK"* ]] && break; sleep 0.25; done
+[[ "$(mdtext)" == *"KMUX MD OK"* ]] || fail "markdown pane did not render: $(mdtext)"
+[[ "$(mdtext)" != *"flowchart LR"* ]] || fail "the mermaid block should be drawn, not shown as text"
+[[ "$(mdtext)" == *cart*paid* && "$(mdtext)" != *"Diagram error"* ]] || fail "the mermaid diagram should be drawn: $(mdtext)"
+sleep 1
+raw "{\"id\":1,\"cmd\":\"debug.snapshot\",\"args\":{\"path\":\"$out/markdown.png\"}}" >/dev/null
+echo "Edited on disk" >> "$out/docs/spec.md"
+for _ in $(seq 20); do [[ "$(mdtext)" == *"Edited on disk"* ]] && break; sleep 0.25; done
+[[ "$(mdtext)" == *"Edited on disk"* ]] || fail "markdown pane should reload when the file changes"
+"$cli" navigate doc "$out/docs/other.md" >/dev/null
+for _ in $(seq 20); do [[ "$(mdtext)" == *"OTHER PAGE"* ]] && break; sleep 0.25; done
+[[ "$(mdtext)" == *"OTHER PAGE"* ]] || fail "navigate should show the other file: $(mdtext)"
+missing="$("$cli" open md "$out/docs/nope.md" --window "$mdw" 2>&1)" && fail "a missing file should fail"
+[[ "$missing" == *"No such file"* ]] || fail "a missing file should say so: $missing"
+"$cli" close --window "$mdw" >/dev/null
+
 # 9. iOS panes: the simulator's screen in a pane, with taps and Home.
 # Boots a simulator if none is (it stays booted). KMUX_E2E_IOS=0 skips this.
 if [[ "${KMUX_E2E_IOS:-1}" != 0 ]] && xcrun simctl list devices available 2>/dev/null | grep -q iPhone; then

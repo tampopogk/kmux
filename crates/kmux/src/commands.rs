@@ -28,8 +28,8 @@ pub static COMMANDS: &[Command] = &[
     Command {
         name: "open",
         group: "Panes",
-        summary: "Open a terminal, web or iOS pane and wait until it is running.",
-        usage: "kmux open [term] [--cmd CMD] [--cwd DIR] [--name NAME] [--split right|down|auto] [--size FRACTION] [--tab] [--window ID|new] [--no-wait]\n       kmux open web URL [--history] [same placement options]\n       kmux open ios --app APP [--device DEVICE] [same placement options]",
+        summary: "Open a terminal, web, iOS or markdown pane and wait until it is running.",
+        usage: "kmux open [term] [--cmd CMD] [--cwd DIR] [--name NAME] [--split right|down|auto] [--size FRACTION] [--tab] [--window ID|new] [--no-wait]\n       kmux open web URL [--history] [same placement options]\n       kmux open md FILE [same placement options]\n       kmux open ios --app APP [--device DEVICE] [same placement options]",
         options: &[
             ("--cmd CMD", "Shell command line to run in your login shell, e.g. \"npm run dev\". Put it in single quotes if it uses $VARS or ;, so your own shell leaves it alone. Default: an interactive shell."),
             ("--cwd DIR", "Working directory."),
@@ -51,6 +51,7 @@ pub static COMMANDS: &[Command] = &[
             ("kmux open --name build --split down --size 1/4 --cmd 'for i in 1 2 3; do echo step $i; done'", "A quarter-height pane below, running a loop."),
             ("kmux open --window new --name scratch", "Open a shell in a new window."),
             ("kmux open ios --name phone --app build/MyApp.app --split right --size 1/3", "Run your app in the simulator, in the right third."),
+            ("kmux open md docs/spec.md --name spec --split right", "Show a markdown file (with mermaid diagrams) beside this pane; it reloads when the file changes."),
         ],
         parse: parse_open,
         show: output::opened,
@@ -231,8 +232,8 @@ pub static COMMANDS: &[Command] = &[
     Command {
         name: "navigate",
         group: "Panes",
-        summary: "Point a web pane at a new URL, or go back or forward.",
-        usage: "kmux navigate PANE URL\n       kmux navigate PANE --back|--forward",
+        summary: "Point a web pane at a new URL (or go back or forward), or a markdown pane at another file.",
+        usage: "kmux navigate PANE URL\n       kmux navigate PANE --back|--forward\n       kmux navigate PANE FILE.md",
         options: &[
             ("--back", "Go back a page. Only for panes opened with `open web URL --history`."),
             ("--forward", "Go forward a page (after --back)."),
@@ -241,6 +242,7 @@ pub static COMMANDS: &[Command] = &[
         examples: &[
             ("kmux navigate site localhost:5173", "Show localhost:5173 in the site pane."),
             ("kmux navigate site --back", "Go back to the previous page (the pane was opened with --history)."),
+            ("kmux navigate spec docs/roadmap.md", "Show another markdown file in the spec pane."),
         ],
         parse: |args| {
             let pane = pane(args, "navigate")?;
@@ -248,6 +250,7 @@ pub static COMMANDS: &[Command] = &[
             match (back, forward, args.positional()) {
                 (true, false, None) => Ok(json!({ "pane": pane, "back": true })),
                 (false, true, None) => Ok(json!({ "pane": pane, "forward": true })),
+                (false, false, Some(target)) if is_markdown(&target) => Ok(json!({ "pane": pane, "path": absolute(&target) })),
                 (false, false, Some(url)) => Ok(json!({ "pane": pane, "url": url })),
                 (false, false, None) => Err(usage("navigate", "missing URL (or --back / --forward)")),
                 _ => Err(usage("navigate", "give one of URL, --back or --forward")),
@@ -329,6 +332,21 @@ fn target(args: &mut Args, command: &str) -> Result<Value, Failure> {
     }
 }
 
+fn is_markdown(target: &str) -> bool {
+    let lower = target.to_lowercase();
+    [".md", ".markdown", ".mdown"].iter().any(|ext| lower.ends_with(ext)) && !lower.contains("://")
+}
+
+/// A file path as kmux needs it: absolute, relative ones taken from here.
+fn absolute(path: &str) -> String {
+    let path = std::path::Path::new(path);
+    if path.is_absolute() || path.starts_with("~") {
+        return path.to_string_lossy().into();
+    }
+    std::env::current_dir().map(|dir| dir.join(path)).ok().and_then(|p| std::fs::canonicalize(&p).ok().or(Some(p)))
+        .map(|p| p.to_string_lossy().into()).unwrap_or_else(|| path.to_string_lossy().into())
+}
+
 fn parse_open(args: &mut Args) -> Result<Value, Failure> {
     let mut out = Map::new();
     for (flag, key) in [("--cmd", "cmd"), ("--cwd", "cwd"), ("--name", "name"), ("--split", "split"), ("--size", "size"), ("--window", "window"), ("--app", "app"), ("--device", "device")] {
@@ -354,14 +372,21 @@ fn parse_open(args: &mut Args) -> Result<Value, Failure> {
     let history = args.flag("--history");
     let kind = match args.positional() {
         None => "term".to_string(),
-        Some(kind) if ["term", "web", "ios"].contains(&kind.as_str()) => kind,
+        Some(kind) if ["term", "web", "ios", "md"].contains(&kind.as_str()) => kind,
+        Some(other) if is_markdown(&other) => {
+            return Err(usage("open", &format!("to show a markdown file use: kmux open md {other}")));
+        }
         Some(other) => {
-            return Err(usage("open", &format!("unknown pane type \"{other}\" (term, web or ios). To run a command use --cmd \"{other}\"")));
+            return Err(usage("open", &format!("unknown pane type \"{other}\" (term, web, ios or md). To run a command use --cmd \"{other}\"")));
         }
     };
     if kind == "web" {
         let url = args.positional().ok_or_else(|| usage("open", "web panes need a URL: kmux open web URL"))?;
         out.insert("url".into(), json!(url));
+    }
+    if kind == "md" {
+        let file = args.positional().ok_or_else(|| usage("open", "markdown panes need a file: kmux open md FILE"))?;
+        out.insert("path".into(), json!(absolute(&file)));
     }
     if kind == "ios" && !out.contains_key("app") {
         return Err(usage("open", "iOS panes need an app: kmux open ios --app MyApp.app (or a bundle ID)"));

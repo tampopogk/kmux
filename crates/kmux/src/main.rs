@@ -381,6 +381,8 @@ mod tests {
             ("kmux move-tab t2 --index 0", json!({ "tab": "t2", "index": 0 })),
             ("kmux open web a.test --history", json!({ "type": "web", "url": "a.test", "history": true })),
             ("kmux navigate site --back", json!({ "pane": "site", "back": true })),
+            ("kmux open md /tmp/a.md", json!({ "type": "md", "path": "/tmp/a.md" })),
+            ("kmux navigate spec /tmp/b.md", json!({ "pane": "spec", "path": "/tmp/b.md" })),
         ];
         for (line, expected) in cases {
             let (_, request) = parse(line).unwrap_or_else(|f| panic!("{line}: {}", f.message));
@@ -398,6 +400,8 @@ mod tests {
             ("kmux move logs", "say where"),
             ("kmux zoom a b", "unexpected argument \"b\""),
             ("kmux open --history", "only for web panes"),
+            ("kmux open md", "need a file"),
+            ("kmux open notes.md", "kmux open md notes.md"),
             ("kmux navigate site --back x", "one of URL"),
             ("kmux lsit", "Did you mean: list"),
             ("kmux rename t1 x", "Did you mean: rename-tab"),

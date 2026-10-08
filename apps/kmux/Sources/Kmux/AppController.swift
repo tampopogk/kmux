@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 import GhosttyKit
 import KmuxCore
 
@@ -34,6 +35,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         host.core = core
         host.instance = instance
         host.onFocus = { [weak self] id in self?.focused(id) }
+        host.onOpenMarkdown = { [weak self] id, path in self?.request(["cmd": "navigate", "args": ["pane": .string(id), "path": .string(path)]]) }
         host.onNavigate = { [weak self] id, url in self?.request(["cmd": "navigate", "args": ["pane": .string(id), "url": .string(url)]]) }
         host.onPaneDrag = { [weak self] id, _ in self?.dragPane(id) }
         host.contextMenu = { [weak self] in self?.paneMenu?.copy() as? NSMenu }
@@ -67,7 +69,10 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
         core.extraCommands["debug.drag"] = { [weak self] args in try await self?.debugDrag(args) ?? [:] }
         core.extraCommands["debug.web"] = { [weak self] args in
-            guard let self, let web = try host.web(core.needPane(args["pane"]?.string).id) else { throw KmuxError("wrong_type", "not a web pane") }
+            guard let self else { return [:] }
+            let id = try core.needPane(args["pane"]?.string).id
+            if let markdown = host.markdown(id) { return ["text": .string(await markdown.text())] }
+            guard let web = host.web(id) else { throw KmuxError("wrong_type", "not a web or markdown pane") }
             let text = try? await web.webView.evaluateJavaScript("document.body ? document.body.innerText : ''") as? String
             return ["url": web.webView.url.map { .string($0.absoluteString) } ?? nil, "text": .string(text ?? "")]
         }
@@ -194,6 +199,20 @@ final class AppController: NSObject, NSApplicationDelegate {
     /// As in the model, a new iOS pane starts with an app already there: Settings.
     @objc func iosRight() { split("right", ios: true) }
     @objc func iosDown() { split("down", ios: true) }
+    @objc func markdownRight() { openMarkdown("right") }
+    @objc func markdownDown() { openMarkdown("down") }
+
+    /// Asks for a markdown file, then opens it beside the focused pane.
+    private func openMarkdown(_ direction: String) {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = ["md", "markdown", "mdown"].compactMap { UTType(filenameExtension: $0) }
+        panel.allowsOtherFileTypes = true
+        panel.message = "Choose a markdown file to show"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        var args: [String: JSON] = ["type": "md", "path": .string(url.path), "split": .string(direction)]
+        if let window = keyWindow?.id { args["window"] = .string(window) }
+        request(["cmd": "open", "args": .object(args)])
+    }
 
     /// The Home button of the focused iOS pane's simulator.
     @objc func pressHome() {
@@ -593,6 +612,8 @@ final class AppController: NSObject, NSApplicationDelegate {
             ("New Web Pane Below", #selector(webDown), nil, nil),
             ("New iOS Pane Right", #selector(iosRight), nil, nil),
             ("New iOS Pane Below", #selector(iosDown), nil, nil),
+            ("New Markdown Pane Right…", #selector(markdownRight), nil, nil),
+            ("New Markdown Pane Below…", #selector(markdownDown), nil, nil),
             ("Open URL…", #selector(openURL), nil, .cmd("l")),
             ("Back", #selector(goBack), nil, nil),
             ("Forward", #selector(goForward), nil, nil),
