@@ -354,7 +354,19 @@ None right now.
 
 ### 8.3 Performance
 
-`kmux-bench` measures pane start time, typing latency and memory per pane against targets. Results and targets are added below once the benchmark exists.
+`kmux-bench` (`crates/kmux-bench`) is kmux's performance reference. It starts its own kmux in the background on a private socket, measures it, saves the results under `target/bench/`, and fails if a result is above its target in `bench/targets.json`.
+
+| Measure | How | Target | First results (2026-10-08) |
+|---------|-----|--------|----------------------------|
+| Pane start | `open` a terminal until it is running, and until its first output is on screen (includes the login shell starting) | first output p95 ≤ 150 ms | running p50 13 ms; first output p50 48 ms, p95 52 ms |
+| Typing latency | A real key event until the character is in the terminal's text (`cat` echoes it through the tty). Doesn't count drawing the frame (up to one frame more). | p95 ≤ 5 ms | p50 0.2 ms, p95 0.6 ms |
+| Memory | The app's footprint before and after 10 idle shell panes | ≤ 15 MB per terminal pane | 9 MB per pane; the app with one pane is 163 MB |
+
+```sh
+cargo build --release && target/release/kmux-bench      # --starts N --keys N --panes N --json
+```
+
+Web panes' memory isn't counted: WebKit runs each page in its own process.
 
 ---
 

@@ -12,12 +12,14 @@ or anything that speaks its control protocol.
 | `apps/kmux/` | The app (Swift, AppKit, upstream Ghostty). |
 | `crates/kmux/` | The `kmux` CLI (Rust). |
 | `crates/kmux-client/` | Control-socket client, also used by kanna. |
+| `crates/kmux-bench/`, `bench/` | The performance reference and its targets. |
 
 ```sh
 scripts/build-kmux.sh            # target/kmux.app (builds GhosttyKit first if needed)
 cargo build --release            # target/release/kmux
 scripts/test-kmux-protocol.sh    # shared cases: model and app
 scripts/e2e-kmux.sh              # end to end: app + CLI + pixels
+target/release/kmux-bench        # performance: pane start, typing latency, memory (targets in bench/)
 ```
 
 Run several kmux instances at once with `kmux --instance NAME …` (each has

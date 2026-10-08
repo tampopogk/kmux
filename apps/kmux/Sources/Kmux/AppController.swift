@@ -47,6 +47,13 @@ final class AppController: NSObject, NSApplicationDelegate {
         core.extraCommands["debug.snapshot"] = { [weak self] args in try self?.snapshot(args) ?? [:] }
         core.extraCommands["debug.key"] = { [weak self] args in try self?.pressKey(args) ?? [:] }
         core.extraCommands["debug.click"] = { [weak self] args in try self?.click(args) ?? [:] }
+        core.extraCommands["debug.text"] = { [weak self] args in
+            guard let self, let terminal = try host.terminal(core.needPane(args["pane"]?.string).id) else { throw KmuxError("wrong_type", "not a terminal pane") }
+            return ["text": .string(terminal.viewportText())]
+        }
+        core.extraCommands["debug.stats"] = { _ in
+            ["pid": .number(Double(ProcessInfo.processInfo.processIdentifier)), "footprint": .number(Double(memoryFootprint()))]
+        }
         core.extraCommands["debug.drag"] = { [weak self] args in try await self?.debugDrag(args) ?? [:] }
         core.extraCommands["debug.web"] = { [weak self] args in
             guard let self, let web = try host.web(core.needPane(args["pane"]?.string).id) else { throw KmuxError("wrong_type", "not a web pane") }
@@ -626,4 +633,14 @@ final class AppController: NSObject, NSApplicationDelegate {
         FileHandle.standardError.write(Data((message + "\n").utf8))
         exit(1)
     }
+}
+
+/// The app's memory footprint in bytes (what Activity Monitor shows as Memory).
+private func memoryFootprint() -> UInt64 {
+    var info = task_vm_info_data_t()
+    var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+    let result = withUnsafeMutablePointer(to: &info) {
+        $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count) }
+    }
+    return result == KERN_SUCCESS ? info.phys_footprint : 0
 }
