@@ -4,7 +4,7 @@
 
 kmux's markdown pane is going native ([spec, Native UI](../kmux-spec.md#81-decided)), so it can't draw mermaid diagrams with mermaid.js in a web view. This compares the four open-source renderers that draw mermaid without a browser, against mermaid.js itself, on the diagrams in our own docs.
 
-**Recommendation: [merman](https://github.com/Latias94/merman).** It is the only candidate whose output matches mermaid.js: same layout, same sizes, all labels. The others draw their own interpretation, and break on our larger diagrams. We'd use merman for parsing and layout, and draw natively ourselves (see [6](#6-recommendation)).
+**Recommendation: [merman](https://github.com/Latias94/merman).** It is the only candidate whose output matches mermaid.js: same layout, same sizes, all labels. The others draw their own interpretation, and break on our larger diagrams. We'd use merman for parsing and layout, and draw natively ourselves (see [7](#7-recommendation)). Its code is huge and almost certainly agent-written, but disciplined; the slim build kmux needs adds about 4–7 MB ([6](#6-code-quality-and-size)).
 
 ## Table of Contents
 
@@ -13,8 +13,9 @@ kmux's markdown pane is going native ([spec, Native UI](../kmux-spec.md#81-decid
 3. [How We Tested](#3-how-we-tested)
 4. [Results](#4-results)
 5. [Fitting Into a Native App](#5-fitting-into-a-native-app)
-6. [Recommendation](#6-recommendation)
-7. [Glossary](#7-glossary)
+6. [Code Quality and Size](#6-code-quality-and-size)
+7. [Recommendation](#7-recommendation)
+8. [Glossary](#8-glossary)
 
 ---
 
@@ -28,6 +29,7 @@ kmux's markdown pane is going native ([spec, Native UI](../kmux-spec.md#81-decid
 | Readable on our complex diagrams | ✅ | ⚠️ overlaps | ⚠️ overlaps, very wide | ⚠️ tiny, unwrapped |
 | Active | ✅ daily | ✅ | ⚠️ quiet since May | ❌ one-off drop |
 | Swift | Swift package over a Rust library (build the xcframework yourself) | Rust only | Rust only | Pure Swift package |
+| Size (stripped CLI) | 38 MB, all types; **4–7 MB** for the 3 types we use | 6.4 MB | 3.9 MB | 6.7 MB |
 
 ```mermaid
 flowchart LR
@@ -130,7 +132,56 @@ A native pane needs to draw the diagram without a web view, crisp at any zoom (p
 
 ---
 
-## 6. Recommendation
+## 6. Code Quality and Size
+
+### 6.1 Code quality
+
+merman is enormous for what it does, and almost certainly written mostly by coding agents, but it is disciplined: idiomatic Rust, documented, tested against mermaid.js, linted and fuzzed. The risk is less the code than its size and its single maintainer.
+
+| Measure | merman 0.8.0 |
+|---------|--------------|
+| Rust, all crates | ≈ 970,000 lines (27 crates); ≈ 495,000 in library code outside tests and tooling |
+| Generated code | ≈ 30,000 lines (LALRPOP parsers for flowchart, sequence, class, ER and state, plus binding tables). The rest is written by hand or agent. |
+| Crates kmux would use | `merman-core` (parsing, 98k lines), `merman-render` (layout and SVG, 175k), `dugong` + `dugong-graphlib` (a port of the dagre layout library, 15k) |
+| Repo size | 324 MB checked out: 200 MB of fixtures (3,766 SVG goldens, 4,194 `.mmd` inputs), 15 MB of docs (84 plans, 56 "workstreams") |
+| Dependencies | 584 crates in `Cargo.lock` (the whole workspace, including LSP, WASM, Python, Node and Android bindings) |
+| `unsafe` | Forbidden in `merman-core` and `merman-render` (`#![forbid(unsafe_code)]`); 126 uses confined to the C FFI crate |
+| Panic sites in library code | 546 `unwrap()`, 1,090 `expect()`, 139 `panic!`, 124 `unreachable!`; the ones sampled guard internal invariants, with messages ("a self-loop helper node is present after insertion"), not bad input. The C FFI wraps calls in `catch_unwind`. |
+| Very long functions | ≈ 34 over 400 lines; `layout_flowchart_with_model` is ≈ 865 |
+| Tests | Parity tests against upstream mermaid SVG goldens (`xtask compare`), per-feature diagram tests, doc tests; `cargo nextest` in CI |
+| CI | 23 workflows: `cargo fmt --check`, `clippy -D warnings`, tests, weekly fuzzing (7 targets: parse, render, SVG, FFI…), `cargo audit`, performance runs |
+| History | One author, ≈ 6,000 commits since February 2026, ≈ 100 a week, through PRs with conventional commit messages. An `AGENTS.md` sets rules for agents ("prefer source-backed convergence over pixel hacks"). The pace and the volume of plans and reports point to agent-driven development. |
+
+**Reading the parts we'd use:**
+
+- **Parsing** is generated LALRPOP grammars with hand-written lexers, closely following mermaid's own Jison grammars. Readable, with source spans kept for editor diagnostics.
+- **Layout** (`dugong`) is a module-by-module port of dagre (`acyclic`, `rank`, `order`, `position`…), which makes it easy to check against the original.
+- **Text measurement** is a `TextMeasurer` trait with many browser-imitating variants (`getBBox`, `getBoundingClientRect`, tspan widths) because it chases mermaid.js's exact numbers. It is over-engineered, but the **Swift binding exposes a host measurer** (`MermanTextMeasurer`), so kmux can measure labels with Core Text. That answers the text-measurement risk in [5](#5-fitting-into-a-native-app).
+- **Structure** shows its origin: thorough, defensive, deeply abstracted (operation control, cancellation, capability descriptors everywhere), with some huge functions. It's fine to call, hard to change. We would not want to patch it locally; fixes should go upstream.
+
+**What it means for us:** the bus factor is one. If the author stops, nobody else knows 500,000 lines of agent-written Rust. Mitigations: pin an exact version, build it ourselves from a pinned tag, use only layout (the smallest, most stable surface), and keep the drawing code ours. If merman goes away, the pinned version keeps working; dugong (15k lines) is small enough to fork.
+
+### 6.2 Size
+
+What each would add to kmux. The CLIs include their own command-line code; the merman probes are a minimal program that lays out one diagram (`spikes/mermaid-bakeoff/size-probe`, release, LTO, stripped, arm64), less the 0.3 MB of an empty Rust program.
+
+| What | Size |
+|------|-----:|
+| **merman, flowchart + sequence + state, layout only** | **7.2 MB** |
+| …same, optimised for size (`opt-level = "z"`, panics abort) | 3.5 MB |
+| merman, every diagram type + SVG + ELK layout (its default) | 18.0 MB |
+| merman CLI release (everything: PNG/PDF export, fonts, LSP, ASCII) | 38.1 MB stripped (43.4 MB as shipped) |
+| mmdr CLI | 6.4 MB stripped |
+| Selkie CLI | 3.9 MB (already stripped) |
+| BeautifulMermaid, in a tiny Swift CLI | 6.7 MB stripped |
+| mermaid.min.js 12.1.0 (needs a web view) | 5.5 MB |
+| For scale: kmux.app today (GhosttyKit included) | 16 MB |
+
+Panics must stay unwinding (not aborting) inside an app, so the realistic cost is **about 4–7 MB**: similar to the alternatives and to mermaid.js, but 25–45% of kmux.app's 16 MB. Most of it is merman's mermaid-compatible configuration, theming and text machinery, which every diagram type carries.
+
+---
+
+## 7. Recommendation
 
 **Use merman** for parsing and layout. It's the only one that matches mermaid.js, it covers every diagram type, it's very active, and it's Apache-2.0.
 
@@ -139,7 +190,8 @@ A native pane needs to draw the diagram without a web view, crisp at any zoom (p
 What we'd need to build or upstream:
 
 - Build `Merman.xcframework` in kmux's build script (pinned version, Rust 1.95 via rustup), like GhosttyKit.
-- **Text measurement:** merman sizes nodes with its own font metrics. If kmux draws with the system font, labels may not fit their boxes. We'd either draw with the font merman measures with, or ask merman to measure with ours (a measurer hook in its constructor services, possibly upstream).
+- **Text measurement:** use the binding's host measurer (`MermanTextMeasurer`) so merman sizes boxes with Core Text, in the font kmux draws with.
+- **Pin and contain it:** an exact version, built from source at a pinned tag; only the flowchart, sequence and state features and layout output (≈ 4–7 MB); panics left unwinding, caught at the boundary. The bus factor is one, so the drawing code stays ours and the dependency stays narrow.
 - The drawers: flowchart (shapes, edge routes and markers, subgraphs, `classDef`), sequence (actors, messages, notes, `alt` and `loop` boxes), state.
 - If we use the PNG fallback: report the resvg styling gaps upstream (subgraph fill, note background, parallelogram label).
 
@@ -147,7 +199,7 @@ Not recommended: BeautifulMermaid (narrow, off-style, inactive, flipped on macOS
 
 ---
 
-## 7. Glossary
+## 8. Glossary
 
 | Term | Meaning |
 |------|---------|
@@ -158,4 +210,7 @@ Not recommended: BeautifulMermaid (narrow, off-style, inactive, flipped on macOS
 | **Raster / vector** | A raster image is pixels (blurs when enlarged); vector drawing is shapes, redrawn sharp at any size. |
 | **UniFFI / xcframework** | UniFFI generates Swift bindings for a Rust library; an xcframework packages the compiled library for Apple platforms. |
 | **Core Graphics / Core Text** | macOS's native 2D drawing and text layout. |
+| **Bus factor** | How many people would have to leave before nobody can maintain a project. |
+| **LTO** | Link-time optimisation: the compiler optimises the whole program at link time, dropping unused code. |
+| **Panic (unwind / abort)** | A Rust crash. Unwinding lets the caller catch it; aborting ends the whole process, which in an app means kmux quits. |
 | **Headless Chromium** | A browser with no window, used here only to draw the mermaid.js reference. |
