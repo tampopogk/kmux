@@ -1,6 +1,6 @@
 # kmux — Specification
 
-> **Status:** v0.5 · **Last updated:** 2026-10-08
+> **Status:** v0.6 · **Last updated:** 2026-10-08
 >
 > **Reference model:** [`reference/kmux/index.html`](../reference/kmux/index.html). Open it in a browser and try it.
 > The model is the source of truth for kmux's design and behaviour. This document summarises what the model shows and lists what it doesn't answer yet. If the two disagree, the model wins, and this document should be fixed.
@@ -25,7 +25,7 @@
 
 kmux is a native macOS **mux**. It has one or more windows of tabs, and each tab is split into **panes** that show Ghostty terminals, web pages or the iOS Simulator. Panes have no chrome. Everything is done through menus, shortcuts and dragging, or by other programs through the **control protocol**.
 
-UI actions and protocol requests go through the same core, so a click and a `kanna` command always behave the same way.
+UI actions and protocol requests go through the same core, so a click and a `kanna` or `kmux` command always behave the same way. Several **instances** of kmux can run at once, each with its own windows and socket ([3.4](#34-instances)).
 
 ![A kmux window with a terminal running a dev server, a web pane showing the site and an iOS pane showing the app](img/kmux/layout.png)
 
@@ -107,6 +107,32 @@ Every size is a **fraction of its parent split**. The fractions in a split alway
 - If the sizes add up to more than 1, the request is rejected and nothing changes.
 - Panes in the tab that the tree doesn't mention move to a new tab called `unarranged`.
 
+### 3.4 Instances
+
+An **instance** is one running copy of the kmux app, with its own windows and its own control socket. Several can run side by side, for example one per project.
+
+```mermaid
+flowchart LR
+    CLI["kmux / kanna CLI"] -->|"--instance work"| S2["kmux-work.sock"]
+    CLI -->|"(default)"| S1["kmux.sock"]
+    S1 --> I1["instance: default<br/>its windows, tabs, panes"]
+    S2 --> I2["instance: work<br/>its windows, tabs, panes"]
+```
+
+- **Names:** the default instance is called `default`. Other names use letters, digits, `-` and `_` (up to 32).
+- **Sockets:** all in `~/Library/Application Support/kmux/`. The default instance listens on `kmux.sock`, and one named `work` on `kmux-work.sock`.
+- **Starting one:** `kmux --instance work …` starts `work` if it isn't running. In the app, **kmux → New Instance** starts one named `2`, `3`, ….
+- **Telling them apart:** a named instance shows its name in its window titles (`Tab 1 — w1 · work`) and at the top of the kmux menu. `capabilities` reports the instance name.
+- **Inside a pane:** terminals get `KMUX_INSTANCE`, `KMUX_SOCKET` and `KMUX_PANE`, so `kmux` run in a pane controls the instance that owns it.
+- **Quitting:** an instance removes its socket when it quits, including when it is sent SIGTERM, SIGINT or SIGHUP.
+
+### 3.5 Staying in the background
+
+kmux shouldn't interrupt whatever the user is doing when a script or agent drives it:
+
+- Started by the CLI (or with `--background`), kmux launches without becoming the active app.
+- While kmux isn't the active app, windows it opens or focuses go **just behind** the front window of the app in use, not on top of it. Once the user switches to kmux, windows come to the front as usual.
+
 ---
 
 ## 4. Panes
@@ -154,7 +180,7 @@ stateDiagram-v2
 
 ## 5. Menus and Shortcuts
 
-The menu bar has **Pane**, **View** and **Window** menus. Right-clicking a pane opens the Pane menu for that pane. Right-clicking a tab offers **Move tab to new window** and **Close tab**.
+The menu bar has **Pane**, **View** and **Window** menus. Right-clicking a pane opens the Pane menu for that pane: a terminal shows it unless the program running in it uses the mouse, and a web pane adds it below the browser's own items. Right-clicking a tab offers **Move tab to new window** and **Close tab**.
 
 | Action | Shortcut | Where in the UI |
 |--------|----------|-----------------|
@@ -173,6 +199,7 @@ The menu bar has **Pane**, **View** and **Window** menus. Right-clicking a pane 
 | Close window | ⇧⌘W | Window menu, red title-bar button |
 | Next / previous window | ⌘\` / ⇧⌘\` | Window menu, or pick a window from the list in the Window menu |
 | Move tab to new window | — | Window menu, tab right-click |
+| New instance | — | kmux menu ([3.4](#34-instances)) |
 
 ![The pane menu, opened by right-clicking a pane](img/kmux/pane-menu.png)
 
@@ -233,8 +260,8 @@ Each request is `{ id, cmd, args }`. Each reply is `{ id, ok: true, … }` or `{
 
 | `cmd` | `args` | Notes |
 |-------|--------|-------|
-| `capabilities` | — | Pane types and features. |
-| `open` | `type`, `url` / `cmd` / `cwd` / `app` / `device`, `name?`, `split?` (`right` / `down` / `auto`), `size?`, `tab?`, `window?`, `wait?` | See [3.2](#32-sizes). The reply includes the pane's window. |
+| `capabilities` | — | The instance name, pane types, features and the commands this kmux supports. |
+| `open` | `type`, `url` / `cmd` / `cwd` / `app` / `device`, `name?`, `split?` (`right` / `down` / `auto`), `size?`, `tab?`, `window?`, `wait?` | See [3.2](#32-sizes). The reply includes the pane's window and tab. |
 | `arrange` | `layout` (tree), `window?` | See [3.3](#33-arrange). |
 | `move` | `pane`, plus one of: `to` + `side` (`left` / `right` / `top` / `bottom` / `swap`); `tab` (ID, or `new` with optional `window`); `window` (ID or `new`) | See [section 6](#6-moving-windows-tabs-and-panes). Moving to a window adds the pane to that window's active tab. |
 | `move-tab` | `tab`, `window?`, `index?` | Reorders a tab or moves it to another window, or to a new one. |
@@ -270,6 +297,25 @@ A size can be written as a fraction (`"1/3"`), a percentage (`"25%"`) or a decim
 | `layout_invalid` | Malformed tree, a pane listed twice, or sizes adding up to more than 1. |
 | `start_failed` | The pane went to **failed**. The message says why. |
 
+### 7.4 The `kmux` CLI
+
+`kmux` (in `crates/kmux`) sends one protocol request per command and prints the reply for people, or as JSON with `--json`. It is meant to be easy for people and agents to discover:
+
+- `kmux` or `kmux help` lists every command with a one-line summary. `kmux help COMMAND` (or `COMMAND --help`) shows usage, options and examples. `kmux commands --json` describes everything for scripts.
+- If kmux is running, help marks the commands it doesn't support with `[not in the running kmux]`. Help never starts kmux.
+- Mistakes say what to do next: a "did you mean", the usage line, or `kmux list` to find names and IDs.
+- `--instance NAME` picks an instance. Without it, the CLI uses `$KMUX_SOCKET`, then `$KMUX_INSTANCE`, then the default. `kmux instances` lists the running instances.
+- Commands start kmux (in the background) if it isn't running.
+- Exit codes: 0 ok, 1 failed, 2 bad usage, 3 kmux not reachable, 4 not found, 5 not supported by the running kmux.
+
+```text
+$ kmux open --name logs --split right --size 1/3 --cmd "tail -f app.log"
+opened p3 (logs) in window w1, tab t1: running
+$ kmux instances
+* default  1 window, 3 panes
+  work     2 windows, 4 panes
+```
+
 ---
 
 ## 8. Decisions and Open Questions
@@ -281,12 +327,16 @@ A size can be written as a fraction (`"1/3"`), a percentage (`"25%"`) or a decim
 | Platform | A native macOS app (AppKit). |
 | Terminal | Ghostty (GhosttyKit), reusing kanna-v3's build pipeline and terminal view. Start from **upstream Ghostty**: kanna-v3's fork existed to stream terminals from a daemon, and kmux has no persisted terminals for now. |
 | iOS pane | The native iOS Simulator. **Deferred:** not part of the first native builds. |
-| Transport | A **persistent connection** over the Unix socket: a client keeps one connection open and sends many requests over it. Messages are **newline-delimited JSON** (one request or reply per line), answered in order. The socket is `~/Library/Application Support/kmux/kmux.sock` (or `$KMUX_SOCKET`), readable only by the user. |
+| Transport | A **persistent connection** over the Unix socket: a client keeps one connection open and sends many requests over it. Messages are **newline-delimited JSON** (one request or reply per line), answered in order. Each instance has its own socket in `~/Library/Application Support/kmux/` (`kmux.sock` for the default instance), or `$KMUX_SOCKET`, readable only by the user. |
 | Shortcuts | Come from the user's **Ghostty config**, as in kanna-v3, with the shortcuts in [section 5](#5-menus-and-shortcuts) as defaults. |
 | Pane commands | A `term` pane's `cmd` is a shell command line, run by the user's login shell. |
 | Process model | kmux is a single app that runs its own terminals and listens on the control socket itself. Later, we fork our own mux and move to a kanna-v3-style app-plus-daemon. |
 | Reuse | Copy the kanna-v3 pieces kmux needs and trim them, without depending on v3. |
 | kanna CLI | Rust. |
+| kmux CLI | Rust, sharing the socket client with kanna (`crates/kmux-client`). Commands, help and parsing come from one table. Checked by having a fresh agent use it cold. |
+| Repos | kmux (app, CLI, model, spec) and kanna are separate repos. kanna depends on kmux's `kmux-client` crate. |
+| Instances | Several at once, one socket each ([3.4](#34-instances)). |
+| Background | Driving kmux from scripts doesn't take over the screen ([3.5](#35-staying-in-the-background)). |
 | Tab titles | Plain names (`Tab 1`, …) that users rename by double-clicking and clients rename with `rename-tab`. Listing pane names didn't scale. |
 | Pane dragging | From a ⋯ handle shown on hover at the top of the pane, as in Ghostty, instead of ⌘-drag. |
 | Model and app in sync | The protocol cases in `tests/kmux-protocol/` run against both the reference model and the native core. |
@@ -320,4 +370,6 @@ A size can be written as a fraction (`"1/3"`), a percentage (`"25%"`) or a decim
 | **Reference model** | The mockup in `reference/kmux/` that defines how kmux should look and behave. |
 | **Ghostty / GhosttyKit** | A fast terminal emulator, and the library build of it that kmux embeds. |
 | **iOS Simulator** | Apple's tool, part of Xcode, for running iPhone apps on a Mac. |
+| **Instance** | One running copy of the kmux app, with its own windows and socket. |
+| **Socket** | The Unix-domain socket file a kmux instance listens on for control-protocol requests. |
 | **Daemon** | A background process that keeps running when the app quits. kmux may move terminals into one later. |

@@ -19,3 +19,7 @@ cargo build --release            # target/release/kmux
 scripts/test-kmux-protocol.sh    # shared cases: model and app
 scripts/e2e-kmux.sh              # end to end: app + CLI + pixels
 ```
+
+Run several kmux instances at once with `kmux --instance NAME …` (each has
+its own windows and socket); `kmux instances` lists them. Scripts and tests
+start kmux with `--background`, so it doesn't come to the front.
