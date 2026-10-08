@@ -11,7 +11,7 @@ export KMUX_SOCKET="/tmp/kmux-e2e-$$.sock"
 export KMUX_IGNORE_OCCLUSION=1 # render even if the window is covered
 cli="$repo_root/target/release/kmux"
 
-"$repo_root/target/kmux.app/Contents/MacOS/kmux" --background >"$out/kmux.log" 2>&1 &
+"$repo_root/target/kmux.app/Contents/MacOS/kmux" --bg >"$out/kmux.log" 2>&1 &
 kmux_pid=$!
 trap 'kill $kmux_pid 2>/dev/null || true; rm -f "$KMUX_SOCKET"' EXIT
 
@@ -180,7 +180,7 @@ drawn dragged "*"
 # windows. kmux run inside one of its panes controls that instance.
 other="e2e$$"
 other_socket="$HOME/Library/Application Support/kmux/kmux-$other.sock"
-env -u KMUX_SOCKET "$repo_root/target/kmux.app/Contents/MacOS/kmux" --background --instance "$other" >"$out/kmux-$other.log" 2>&1 &
+env -u KMUX_SOCKET "$repo_root/target/kmux.app/Contents/MacOS/kmux" --bg --instance "$other" >"$out/kmux-$other.log" 2>&1 &
 other_pid=$!
 trap 'kill $kmux_pid $server_pid $other_pid 2>/dev/null || true; rm -f "$KMUX_SOCKET"' EXIT
 for _ in $(seq 50); do [[ -S "$other_socket" ]] && break; sleep 0.1; done

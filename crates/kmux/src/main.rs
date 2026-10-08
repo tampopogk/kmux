@@ -24,13 +24,15 @@ fn run(args: Vec<String>) -> Result<(), Failure> {
     let mut args = Args::new(args);
     let json_output = args.flag("--json");
     let wants_help = args.flag("--help") || args.flag("-h");
-    let target = match args.option("--instance")? {
+    let background = args.flag("--bg");
+    let mut target = match args.option("--instance")? {
         Some(name) if !valid_instance(&name) => {
             return Err(fail(exit::USAGE, format!("bad instance name \"{name}\": use letters, digits, - and _ (up to 32)")))
         }
         Some(name) => Target::named(&name),
         None => Target::from_env(),
     };
+    target.background |= background;
     let Some(name) = args.positional() else {
         if args.flag("--version") {
             println!("kmux {}", env!("CARGO_PKG_VERSION"));
@@ -211,7 +213,7 @@ fn overview(target: &Target) -> String {
     let mut out = String::from(
         "kmux — control the kmux terminal multiplexer (windows → tabs → split panes).\n\
          \n\
-         usage: kmux [--instance NAME] COMMAND [ARGS] [--json]\n",
+         usage: kmux [--instance NAME] [--bg] COMMAND [ARGS] [--json]\n",
     );
     for group in GROUPS {
         out += &format!("\n{group}:\n");
@@ -239,7 +241,8 @@ fn overview(target: &Target) -> String {
          kmux open --window new --name scratch      (a new window)\n\
          \n\
          {}\n\
-         --json prints the reply from kmux as JSON. kmux must be running; the CLI starts it if it isn't.\n\
+         --json prints the reply from kmux as JSON. kmux must be running; the CLI starts it if it isn't\n\
+         (in front, or behind your other windows with --bg or KMUX_BG=1).\n\
          Instance: {} at {} (--instance NAME for another; kmux help instances).\n\
          Exit codes: 0 ok, 1 failed, 2 bad usage, 3 kmux not reachable, 4 not found, 5 not supported by the running kmux.",
         match &supported {
@@ -277,9 +280,10 @@ fn help(command: &Command, target: &Target) -> String {
 
 fn describe(supported: Option<&[String]>) -> Value {
     json!({
-        "usage": "kmux [--instance NAME] COMMAND [ARGS] [--json]",
+        "usage": "kmux [--instance NAME] [--bg] COMMAND [ARGS] [--json]",
         "globalOptions": [
             { "flag": "--instance NAME", "description": "Talk to the kmux instance NAME (default: $KMUX_SOCKET, else $KMUX_INSTANCE, else default). See kmux help instances." },
+            { "flag": "--bg", "description": "If kmux has to be started, keep it behind your other windows (also KMUX_BG=1)." },
             { "flag": "--json", "description": "Print the reply as JSON." }
         ],
         "running": supported.is_some(),

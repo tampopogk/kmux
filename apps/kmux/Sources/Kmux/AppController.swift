@@ -13,8 +13,8 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var signalSources: [DispatchSourceSignal] = []
     private var paneMenu: NSMenu?
     private var testingDrag = false
-    /// Started by the CLI or a script (`--background`): don't take over the screen.
-    private let background = CommandLine.arguments.contains("--background") || ProcessInfo.processInfo.environment["KMUX_BACKGROUND"] == "1"
+    /// Started with `--bg` (or `KMUX_BG=1`), e.g. by tests: don't take over the screen.
+    private let background = CommandLine.arguments.contains("--bg") || ProcessInfo.processInfo.environment["KMUX_BG"] == "1"
     private var controllers: [String: WindowController] = [:]
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -299,11 +299,11 @@ final class AppController: NSObject, NSApplicationDelegate {
         return true
     }
 
-    /// Brings a window forward, unless kmux isn't the app in use: then the
-    /// window goes just behind the front window of the app that is, so a
-    /// script or agent driving kmux doesn't interrupt the user.
+    /// Brings a window forward, except in a `--bg` kmux that isn't the app in
+    /// use: there the window goes just behind the front window of the app
+    /// that is, so tests driving kmux don't interrupt the user.
     private func present(_ window: NSWindow) {
-        if NSApp.isActive {
+        if NSApp.isActive || !background {
             return window.makeKeyAndOrderFront(nil)
         }
         window.makeKey()

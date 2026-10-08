@@ -128,10 +128,10 @@ flowchart LR
 
 ### 3.5 Staying in the background
 
-kmux shouldn't interrupt whatever the user is doing when a script or agent drives it:
+kmux launches in front by default. With `--bg` (on the app or the CLI, or `KMUX_BG=1`), for tests and scripts that start kmux over and over:
 
-- Started by the CLI (or with `--background`), kmux launches without becoming the active app.
-- While kmux isn't the active app, windows it opens or focuses go **just behind** the front window of the app in use, not on top of it. Once the user switches to kmux, windows come to the front as usual.
+- kmux launches without becoming the active app.
+- While it isn't the active app, windows it opens or focuses go **just behind** the front window of the app in use, not on top of it. Once the user switches to kmux, windows come to the front as usual.
 
 ---
 
@@ -305,7 +305,7 @@ A size can be written as a fraction (`"1/3"`), a percentage (`"25%"`) or a decim
 - If kmux is running, help marks the commands it doesn't support with `[not in the running kmux]`. Help never starts kmux.
 - Mistakes say what to do next: a "did you mean", the usage line, or `kmux list` to find names and IDs.
 - `--instance NAME` picks an instance. Without it, the CLI uses `$KMUX_SOCKET`, then `$KMUX_INSTANCE`, then the default. `kmux instances` lists the running instances.
-- Commands start kmux (in the background) if it isn't running.
+- Commands start kmux if it isn't running: in front, or behind other windows with `--bg`.
 - Exit codes: 0 ok, 1 failed, 2 bad usage, 3 kmux not reachable, 4 not found, 5 not supported by the running kmux.
 
 ```text
@@ -336,7 +336,7 @@ $ kmux instances
 | kmux CLI | Rust, sharing the socket client with kanna (`crates/kmux-client`). Commands, help and parsing come from one table. Checked by having a fresh agent use it cold. |
 | Repos | kmux (app, CLI, model, spec) and kanna are separate repos. kanna depends on kmux's `kmux-client` crate. |
 | Instances | Several at once, one socket each ([3.4](#34-instances)). |
-| Background | Driving kmux from scripts doesn't take over the screen ([3.5](#35-staying-in-the-background)). |
+| Background | kmux launches in front; `--bg` keeps it behind the user's windows, for tests ([3.5](#35-staying-in-the-background)). |
 | Tab titles | Plain names (`Tab 1`, …) that users rename by double-clicking and clients rename with `rename-tab`. Listing pane names didn't scale. |
 | Pane dragging | From a ⋯ handle shown on hover at the top of the pane, as in Ghostty, instead of ⌘-drag. |
 | Model and app in sync | The protocol cases in `tests/kmux-protocol/` run against both the reference model and the native core. |

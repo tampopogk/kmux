@@ -29,6 +29,13 @@ pub enum Error {
 pub struct Target {
     pub instance: String,
     pub socket: PathBuf,
+    /// If kmux has to be started, start it without bringing it to the front
+    /// (`--bg`, or `KMUX_BG=1`).
+    pub background: bool,
+}
+
+fn background_from_env() -> bool {
+    std::env::var("KMUX_BG").is_ok_and(|v| v == "1")
 }
 
 pub const DEFAULT_INSTANCE: &str = "default";
@@ -54,12 +61,12 @@ impl Target {
     pub fn from_env() -> Target {
         let instance = std::env::var("KMUX_INSTANCE").ok().filter(|n| !n.is_empty()).unwrap_or_else(|| DEFAULT_INSTANCE.into());
         let socket = std::env::var_os("KMUX_SOCKET").filter(|p| !p.is_empty()).map(PathBuf::from);
-        Target { socket: socket.unwrap_or_else(|| instance_socket(&instance)), instance }
+        Target { socket: socket.unwrap_or_else(|| instance_socket(&instance)), instance, background: background_from_env() }
     }
 
     /// An instance chosen by name (`--instance`), whatever the environment says.
     pub fn named(name: &str) -> Target {
-        Target { instance: name.into(), socket: instance_socket(name) }
+        Target { instance: name.into(), socket: instance_socket(name), background: background_from_env() }
     }
 
     /// The running instances, default first, from the sockets that answer.
@@ -149,11 +156,14 @@ impl Kmux {
     }
 }
 
-/// Starts the instance in the background (it doesn't come to the front), as
+/// Starts the instance (in the background with `target.background`), as
 /// a new copy of the app (other instances may be running): `$KMUX_APP` if set, else the app by bundle ID.
 fn launch(target: &Target) -> Result<(), Error> {
     let mut open = Command::new("/usr/bin/open");
-    open.args(["-n", "-g"]);
+    open.arg("-n");
+    if target.background {
+        open.arg("-g");
+    }
     if target.socket != instance_socket(&target.instance) {
         open.arg("--env").arg(format!("KMUX_SOCKET={}", target.socket.display()));
     }
@@ -161,7 +171,10 @@ fn launch(target: &Target) -> Result<(), Error> {
         Some(app) => open.arg("-a").arg(app),
         None => open.arg("-b").arg("dev.kanna.kmux"),
     };
-    open.args(["--args", "--background", "--instance", &target.instance]);
+    open.args(["--args", "--instance", &target.instance]);
+    if target.background {
+        open.arg("--bg");
+    }
     let status = open.status().map_err(|e| Error::Unreachable(format!("could not start kmux: {e}")))?;
     if status.success() {
         Ok(())

@@ -22,4 +22,4 @@ scripts/e2e-kmux.sh              # end to end: app + CLI + pixels
 
 Run several kmux instances at once with `kmux --instance NAME …` (each has
 its own windows and socket); `kmux instances` lists them. Scripts and tests
-start kmux with `--background`, so it doesn't come to the front.
+can start kmux with `--bg` (app or CLI, or `KMUX_BG=1`) to keep it behind your other windows.
