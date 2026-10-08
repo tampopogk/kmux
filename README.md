@@ -15,7 +15,7 @@ or anything that speaks its control protocol.
 | `crates/kmux-bench/`, `bench/` | The performance reference and its targets. |
 
 ```sh
-scripts/build-kmux.sh            # target/kmux.app (builds GhosttyKit first if needed)
+scripts/build-kmux.sh            # target/kmux.app (builds GhosttyKit and merman first if needed; merman needs rustup)
 cargo build --release            # target/release/kmux
 scripts/test-kmux-protocol.sh    # shared cases: model and app
 scripts/e2e-kmux.sh              # end to end: app + CLI + pixels (KMUX_E2E_IOS=0 skips the simulator)

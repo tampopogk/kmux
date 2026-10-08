@@ -4,7 +4,7 @@
 
 kmux's markdown pane is going native ([spec, Native UI](../kmux-spec.md#81-decided)), so it can't draw mermaid diagrams with mermaid.js in a web view. This compares the four open-source renderers that draw mermaid without a browser, against mermaid.js itself, on the diagrams in our own docs.
 
-**Recommendation: [merman](https://github.com/Latias94/merman).** It is the only candidate whose output matches mermaid.js: same layout, same sizes, all labels. The others draw their own interpretation, and break on our larger diagrams. We'd use merman for parsing and layout, and draw natively ourselves (see [7](#7-recommendation)). Its code is huge and almost certainly agent-written, but disciplined; the slim build kmux needs adds about 4–7 MB ([6](#6-code-quality-and-size)).
+**Recommendation: [merman](https://github.com/Latias94/merman).** It is the only candidate whose output matches mermaid.js: same layout, same sizes, all labels. The others draw their own interpretation, and break on our larger diagrams. We'd use merman for parsing and layout, and draw natively ourselves (see [8](#8-recommendation); built as described in [7](#7-building-it)). Its code is huge and almost certainly agent-written, but disciplined; as built into kmux it adds 7.6 MB ([6](#6-code-quality-and-size), [7](#7-building-it)).
 
 ## Table of Contents
 
@@ -14,8 +14,9 @@ kmux's markdown pane is going native ([spec, Native UI](../kmux-spec.md#81-decid
 4. [Results](#4-results)
 5. [Fitting Into a Native App](#5-fitting-into-a-native-app)
 6. [Code Quality and Size](#6-code-quality-and-size)
-7. [Recommendation](#7-recommendation)
-8. [Glossary](#8-glossary)
+7. [Building It](#7-building-it)
+8. [Recommendation](#8-recommendation)
+9. [Glossary](#9-glossary)
 
 ---
 
@@ -181,7 +182,56 @@ Panics must stay unwinding (not aborting) inside an app, so the realistic cost i
 
 ---
 
-## 7. Recommendation
+## 7. Building It
+
+*Built 2026-10-09 as `KmuxDiagram` in `apps/kmux`. Reproduce the comparison with `spikes/mermaid-bakeoff/compare-native.py`.*
+
+We followed the recommendation: merman lays the diagram out, and kmux draws it.
+
+```mermaid
+flowchart LR
+    src["mermaid source"] --> bridge["kmux-merman<br/>(C bridge, Rust)"]
+    bridge --> merman["merman 0.8.0<br/>parse + layout"]
+    merman -- "text to measure" --> ct["Core Text<br/>(KmuxDiagram)"]
+    ct -- "sizes" --> merman
+    merman -- "layout JSON" --> scene["DiagramScene<br/>shapes + labels"]
+    scene --> draw["Core Graphics<br/>(any zoom, light/dark)"]
+```
+
+| Piece | Where | What it does |
+|-------|-------|--------------|
+| C bridge | `crates/kmux-merman` | One call: source in, layout JSON out. Panics are caught there and returned as errors. |
+| Build | `scripts/build-merman.sh` | Builds the bridge with Rust 1.95 (`--locked`, merman pinned to `=0.8.0`) into `target/merman/KmuxMerman.xcframework`. `build-kmux.sh` runs it; it's a no-op when nothing changed. |
+| Text measurement | `KmuxDiagram/Text.swift` | merman's host measurer calls back into Core Text, so boxes are sized for the font kmux draws with. Drawing wraps and spaces lines with the same code. |
+| Drawing | `KmuxDiagram/Flowchart.swift`, `Sequence.swift`, `State.swift` | Shapes, edges and arrowheads, subgraphs, `classDef`/`style` colours; actors, messages, notes, frames (`alt`, `loop`, …), activations, autonumbers; states, start/end, composites. |
+| View | `KmuxDiagram/DiagramView.swift` | An `NSView` that sizes itself to the diagram × zoom and redraws as vectors. Unsupported types and errors show a message and the source. |
+| Checks | `kmux-diagram` tool, `KmuxDiagramTests`, `debug.diagram`, e2e §8b | Render the corpus to PNG; label, size and fit checks; the same path inside the app. |
+
+### 7.1 Results against mermaid.js
+
+| Measure | Result |
+|---------|--------|
+| Drawn | 40/40 flowchart, sequence and state diagrams (all 38 from our docs, plus 2 feature samples). The 10 other types report themselves as unsupported, as intended. |
+| Labels present | 100% in every diagram |
+| Size vs mermaid.js | within 25% in all 40 |
+| Labels shrunk to fit their box | 0 (every label fits at the size merman measured) |
+| Layout, warm | median 1.3 ms, p90 2.2 ms, max 4.1 ms |
+| Drawing, warm (2× bitmap, no encoding) | median 1.4 ms, p90 3.0 ms, max 3.9 ms |
+| Size added to kmux | 7.6 MB stripped (merman, its dependencies and the bridge) |
+
+![mermaid.js and kmux native, flowcharts](img/mermaid/native-flowcharts.png)
+
+![mermaid.js and kmux native, state and sequence diagrams](img/mermaid/native-state-sequence.png)
+
+### 7.2 Differences and open problems
+
+- **Colours.** Mermaid 12's default theme gives each sequence actor and subgraph its own pastel colour. kmux draws them neutral (white, light grey), matching the rest of the page in light and dark. `classDef` and `style` colours are honoured.
+- **Wrapping.** Core Text text is narrower than the browser's, so a few labels wrap differently (e.g. "term panes (Ghostty)" fits on one line natively). Diamonds sometimes wrap where mermaid doesn't.
+- **ELK.** merman's default flowchart look routes edges with ELK, the same as mermaid 12. Dropping ELK would save 1.3 MB (6.3 MB instead of 7.6 MB) but change how flowchart edges are routed, so we keep it.
+- **Bounds.** merman's layout bounds are computed before the host measurer widens boxes, so kmux sizes the scene from what it draws instead. Worth reporting upstream.
+- **Not yet.** Other diagram types (class, ER, Gantt, pie, …), clickable nodes (`click`), icons and images in nodes, markdown inside labels beyond bold/italic/code, and themes from `%%{init}%%`.
+
+## 8. Recommendation
 
 **Use merman** for parsing and layout. It's the only one that matches mermaid.js, it covers every diagram type, it's very active, and it's Apache-2.0.
 
@@ -199,7 +249,7 @@ Not recommended: BeautifulMermaid (narrow, off-style, inactive, flipped on macOS
 
 ---
 
-## 8. Glossary
+## 9. Glossary
 
 | Term | Meaning |
 |------|---------|

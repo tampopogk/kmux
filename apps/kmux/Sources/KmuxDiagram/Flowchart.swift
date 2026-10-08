@@ -91,7 +91,7 @@ enum Flowchart {
             return [Paths.rect(b), Paths.line([CGPoint(x: x + 8, y: y), CGPoint(x: x + 8, y: y + h)]),
                     Paths.line([CGPoint(x: x + w - 8, y: y), CGPoint(x: x + w - 8, y: y + h)])]
         case "cylinder":
-            // A side wall and bottom arc, then the whole top ellipse.
+            // A side wall and bottom arc, closed along the top ellipse's lower half.
             let ry = min(h / 4, w / 2 / (2.5 + w / 50)), rx = w / 2, k: CGFloat = 0.5523
             let body = CGMutablePath()
             body.move(to: CGPoint(x: x, y: y + ry))
@@ -99,8 +99,11 @@ enum Flowchart {
             body.addCurve(to: CGPoint(x: b.midX, y: y + h), control1: CGPoint(x: x, y: y + h - ry + k * ry), control2: CGPoint(x: b.midX - k * rx, y: y + h))
             body.addCurve(to: CGPoint(x: x + w, y: y + h - ry), control1: CGPoint(x: b.midX + k * rx, y: y + h), control2: CGPoint(x: x + w, y: y + h - ry + k * ry))
             body.addLine(to: CGPoint(x: x + w, y: y + ry))
-            body.addEllipse(in: CGRect(x: x, y: y, width: w, height: 2 * ry))
-            return [body]
+            body.addCurve(to: CGPoint(x: b.midX, y: y + 2 * ry), control1: CGPoint(x: x + w, y: y + ry + k * ry), control2: CGPoint(x: b.midX + k * rx, y: y + 2 * ry))
+            body.addCurve(to: CGPoint(x: x, y: y + ry), control1: CGPoint(x: b.midX - k * rx, y: y + 2 * ry), control2: CGPoint(x: x, y: y + ry + k * ry))
+            body.closeSubpath()
+            // The top as its own shape: in one path with the body, the overlap would cancel out when filled.
+            return [body, CGPath(ellipseIn: CGRect(x: x, y: y, width: w, height: 2 * ry), transform: nil)]
         case "lean_right":
             let o = h / 3
             return [Paths.polygon([CGPoint(x: x + o, y: y), CGPoint(x: x + w, y: y), CGPoint(x: x + w - o, y: y + h), CGPoint(x: x, y: y + h)])]

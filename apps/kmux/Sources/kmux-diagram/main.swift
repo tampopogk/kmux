@@ -37,7 +37,14 @@ for file in files {
         let probe = CGContext(data: nil, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
                               bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
         let shrunk = probe.map { scene.draw(in: $0, dark: false) } ?? 0
-        report[name] = ["shrunk": shrunk, "layout_ms": ms(start, laidOut), "draw_ms": ms(laidOut, drawn), "width": scene.size.width, "height": scene.size.height,
+        // Drawing alone (what a pane pays per frame), into a 2x bitmap, no PNG encoding.
+        let bitmap = CGContext(data: nil, width: Int(scene.size.width * scale), height: Int(scene.size.height * scale), bitsPerComponent: 8,
+                               bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        bitmap?.scaleBy(x: scale, y: scale)
+        let drawStart = DispatchTime.now()
+        if let bitmap { scene.draw(in: bitmap, dark: false) }
+        let drawOnly = Double(DispatchTime.now().uptimeNanoseconds - drawStart.uptimeNanoseconds) / 1e6
+        report[name] = ["shrunk": shrunk, "draw_only_ms": drawOnly, "layout_ms": ms(start, laidOut), "draw_ms": ms(laidOut, drawn), "width": scene.size.width, "height": scene.size.height,
                         "labels": scene.texts]
     } catch {
         try "\(error)".write(toFile: (out as NSString).appendingPathComponent(name + ".error"), atomically: true, encoding: .utf8)
