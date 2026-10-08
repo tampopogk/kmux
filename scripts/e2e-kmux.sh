@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # End-to-end check: starts target/kmux.app on a private socket, drives it with
-# target/release/kanna, and checks the panes are really drawn (window pixels).
+# target/release/kmux (the CLI), and checks the panes are really drawn (window pixels).
 # Build first: scripts/build-kmux.sh && cargo build --release
 set -euo pipefail
 
@@ -9,7 +9,7 @@ out="$repo_root/target/e2e"
 mkdir -p "$out"
 export KMUX_SOCKET="/tmp/kmux-e2e-$$.sock"
 export KMUX_IGNORE_OCCLUSION=1 # render even if the window is covered
-kanna="$repo_root/target/release/kanna"
+cli="$repo_root/target/release/kmux"
 
 "$repo_root/target/kmux.app/Contents/MacOS/kmux" >"$out/kmux.log" 2>&1 &
 kmux_pid=$!
@@ -42,40 +42,40 @@ for k in sys.argv[1].split("."): v = v[int(k)] if k.isdigit() else v[k]
 print(json.dumps(v) if isinstance(v, (dict, list)) else v)' "$1"; }
 
 # 1. A command in a new pane, a third of the window wide.
-[[ "$("$kanna" open term --name e2e --split right --size 1/3 --cmd "printf 'KMUX E2E OK\n'; exec sleep 600")" == e2e ]] || fail "open did not print the pane name"
-list="$("$kanna" list --json)"
+[[ "$("$cli" open --name e2e --split right --size 1/3 --cmd "printf 'KMUX E2E OK\n'; exec sleep 600")" == *"(e2e)"* ]] || fail "open did not print the pane name"
+list="$("$cli" list --json)"
 [[ "$(field windows.0.tabs.0.layout <<<"$list")" == '{"children": [{"pane": "p1", "size": "2/3"}, {"pane": "e2e", "size": "1/3"}], "split": "row"}' ]] \
   || fail "layout: $(field windows.0.tabs.0.layout <<<"$list")"
 sleep 1.5
-[[ "$(field panes.1.state <<<"$("$kanna" list --json)")" == running ]] || fail "e2e is not running"
+[[ "$(field panes.1.state <<<"$("$cli" list --json)")" == running ]] || fail "e2e is not running"
 
 # 2. Both panes are drawn: the command's output, and the new shell's first line.
 drawn two-panes "KMUX E2E OK"
 drawn two-panes-shell "*" 2
 
 # 3. A command that ends leaves its pane on screen, marked exited.
-"$kanna" open term --name done --split down --cmd "echo bye" >/dev/null
+"$cli" open --name done --split down --cmd "echo bye" >/dev/null
 sleep 1.5
-[[ "$(field panes.2.state <<<"$("$kanna" list --json)")" == exited ]] || fail "done did not exit"
+[[ "$(field panes.2.state <<<"$("$cli" list --json)")" == exited ]] || fail "done did not exit"
 
 # 4. Errors map to exit codes.
 set +e
-"$kanna" close nope 2>/dev/null; [[ $? == 4 ]] || fail "unknown pane should exit 4"
-"$kanna" open web 2>/dev/null; [[ $? == 5 ]] || fail "web panes should exit 5 for now"
-"$kanna" open term --name e2e 2>/dev/null; [[ $? == 1 ]] || fail "a taken name should exit 1"
+"$cli" close nope 2>/dev/null; [[ $? == 4 ]] || fail "unknown pane should exit 4"
+"$cli" open --name e2e 2>/dev/null; [[ $? == 1 ]] || fail "a taken name should exit 1"
+"$cli" zoom 2>/dev/null; [[ $? == 2 ]] || fail "missing arguments should exit 2"
 set -e
 
 # 5. Closing panes redistributes space; closing the last closes the window.
-"$kanna" close done
-"$kanna" close e2e
-[[ "$(field windows.0.tabs.0.layout <<<"$("$kanna" list --json)")" == '{"pane": "p1"}' ]] || fail "p1 should fill the window"
-"$kanna" close p1
-[[ "$(field windows <<<"$("$kanna" list --json)")" == '[]' ]] || fail "the window should close with its last pane"
+"$cli" close done >/dev/null
+"$cli" close e2e >/dev/null
+[[ "$(field windows.0.tabs.0.layout <<<"$("$cli" list --json)")" == '{"pane": "p1"}' ]] || fail "p1 should fill the window"
+"$cli" close p1 >/dev/null
+[[ "$(field windows <<<"$("$cli" list --json)")" == '[]' ]] || fail "the window should close with its last pane"
 
 # 6. Keyboard shortcuts, pressed through AppKit's key-event path.
 key() { raw "{\"id\":1,\"cmd\":\"debug.key\",\"args\":{\"key\":\"$1\"}}" >/dev/null; sleep 0.4; }
-state() { "$kanna" list --json; }
-"$kanna" open term --name k1 >/dev/null
+state() { "$cli" list --json; }
+"$cli" open --name k1 >/dev/null
 key "cmd+d"
 key "cmd+shift+d"
 layout="$(field windows.0.tabs.0.layout <<<"$(state)")"

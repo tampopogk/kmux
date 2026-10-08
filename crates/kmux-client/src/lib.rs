@@ -7,7 +7,7 @@ mod client;
 pub use args::Args;
 pub use client::{socket_path, Error, Kmux};
 
-/// Exit codes (docs/kanna-spec.md §8; the kmux CLI uses the same ones).
+/// Exit codes, shared by the kmux and kanna CLIs.
 pub mod exit {
     pub const FAILED: u8 = 1;
     pub const USAGE: u8 = 2;
