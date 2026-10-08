@@ -220,29 +220,60 @@ public final class MarkdownPaneView: NSView, NSTextViewDelegate {
 
     // MARK: Links
 
-    public func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
-        let target = (link as? URL)?.absoluteString ?? (link as? String) ?? ""
-        if target.hasPrefix("#") {
-            scroll(toAnchor: String(target.dropFirst()))
-            return true
-        }
+    /// What a click on a link does. A document must never be able to launch
+    /// anything: local files other than markdown are only revealed in Finder.
+    public enum LinkAction: Equatable {
+        /// Scroll to the heading with this anchor.
+        case scroll(String)
+        /// http, https or mailto: open in the browser or mail app.
+        case openWeb(URL)
+        /// A markdown file (absolute path, a regular file): show it in this pane.
+        case showMarkdown(String)
+        /// Any other local file or folder: select it in Finder, never open it.
+        case reveal(URL)
+        case ignore
+    }
+
+    /// Decides what a link in the document at `documentPath` does.
+    public nonisolated static func action(for target: String, from documentPath: String) -> LinkAction {
+        if target.hasPrefix("#") { return .scroll(String(target.dropFirst())) }
         if let url = URL(string: target), let scheme = url.scheme?.lowercased(), scheme != "file" {
-            if ["http", "https", "mailto"].contains(scheme) { NSWorkspace.shared.open(url) }
-            return true
+            return ["http", "https", "mailto"].contains(scheme) ? .openWeb(url) : .ignore
         }
         // A local file, relative to this one; a #fragment after it is dropped.
         var file = target.hasPrefix("file://") ? (URL(string: target)?.path ?? "") : target
         if let hash = file.firstIndex(of: "#") { file = String(file[..<hash]) }
         file = file.removingPercentEncoding ?? file
-        guard !file.isEmpty else { return true }
-        let url = file.hasPrefix("/") ? URL(fileURLWithPath: file) : URL(fileURLWithPath: path).deletingLastPathComponent().appendingPathComponent(file)
-        let resolved = url.standardizedFileURL.path
-        if ["md", "markdown", "mdown"].contains(url.pathExtension.lowercased()) {
-            onOpenMarkdown?(resolved)
-        } else if FileManager.default.fileExists(atPath: resolved) {
-            NSWorkspace.shared.open(URL(fileURLWithPath: resolved))
+        guard !file.isEmpty else { return .ignore }
+        let url = (file.hasPrefix("/") ? URL(fileURLWithPath: file)
+            : URL(fileURLWithPath: documentPath).deletingLastPathComponent().appendingPathComponent(file)).standardizedFileURL
+        let real = url.resolvingSymlinksInPath()
+        guard let type = (try? FileManager.default.attributesOfItem(atPath: real.path))?[.type] as? FileAttributeType else { return .ignore }
+        if type == .typeRegular, ["md", "markdown", "mdown"].contains(real.pathExtension.lowercased()) {
+            return .showMarkdown(real.path)
         }
+        return .reveal(url)
+    }
+
+    /// Opens web links; replaceable for tests.
+    var openWeb: (URL) -> Void = { NSWorkspace.shared.open($0) }
+    /// Selects a file in Finder; replaceable for tests.
+    var reveal: (URL) -> Void = { NSWorkspace.shared.activateFileViewerSelecting([$0]) }
+
+    public func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
+        follow((link as? URL)?.absoluteString ?? (link as? String) ?? "")
         return true
+    }
+
+    /// Follows a link as a click would.
+    func follow(_ target: String) {
+        switch Self.action(for: target, from: path) {
+        case .scroll(let fragment): scroll(toAnchor: fragment)
+        case .openWeb(let url): openWeb(url)
+        case .showMarkdown(let file): onOpenMarkdown?(file)
+        case .reveal(let url): reveal(url)
+        case .ignore: break
+        }
     }
 
     // MARK: For tests
