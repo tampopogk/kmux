@@ -209,8 +209,9 @@ function createPane(type, a) {
   const p = {
     id: 'p' + (++S.n.pane), name: a.name || null, type, state: 'starting', error: null, gen: 0, waiters: [],
     cmd: a.cmd || null, cwd: a.cwd || '~', url: a.url ? normUrl(a.url) : null,
-    // Web panes keep back/forward history only when opened with history: true.
-    history: type === 'web' && a.history === true ? { back: [], forward: [] } : null,
+    // Web panes keep back/forward history only when opened with history: true;
+    // markdown panes always do (of paths).
+    history: (type === 'web' && a.history === true) || type === 'md' ? { back: [], forward: [] } : null,
     app: a.app || null, device: a.device || 'iPhone 16', path: a.path || null, lines: [], draft: '', busy: false, server: null, exitCode: null,
   };
   S.panes[p.id] = p;
@@ -557,8 +558,18 @@ async function handle(req) {
       case 'navigate': {
         const p = need(args.pane);
         if (p.type === 'md') {
-          if (!args.path) throw kerr('bad_request', 'missing path');
-          p.path = resolvePath(p.path, args.path);
+          const step = args.back ? 'back' : args.forward ? 'forward' : null;
+          if (step) {
+            const from = p.history[step], to = p.history[step === 'back' ? 'forward' : 'back'];
+            if (!from.length) throw kerr('bad_request', `nothing to go ${step} to`);
+            to.push(p.path);
+            p.path = from.pop();
+          } else {
+            if (!args.path) throw kerr('bad_request', 'missing path');
+            const path = resolvePath(p.path, args.path);
+            if (path !== p.path) { p.history.back.push(p.path); p.history.forward = []; }
+            p.path = path;
+          }
           start(p);
           await settled(p);
           return ok({ pane: summary(p) });

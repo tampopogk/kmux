@@ -150,7 +150,7 @@ public final class Core {
         pane.app = args["app"]?.string
         pane.device = args["device"]?.string
         pane.path = args["path"]?.string
-        if type == .web, args["history"] == true { pane.history = History() }
+        if (type == .web && args["history"] == true) || type == .md { pane.history = History() }
         place(pane.id, in: window, split: split, size: size, newTab: args["tab"]?.bool ?? false)
         window.focused = pane.id
         window.activeTab?.lastFocus = pane.id

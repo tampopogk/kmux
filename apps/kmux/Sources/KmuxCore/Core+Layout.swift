@@ -174,8 +174,24 @@ extension Core {
     func navigate(_ args: JSON) async throws -> [String: JSON] {
         let pane = try needPane(args["pane"]?.string)
         if pane.type == .md {
-            guard let path = args["path"]?.string, !path.isEmpty else { throw KmuxError("bad_request", "missing path") }
-            pane.path = Self.resolve(path, from: pane.path ?? "")
+            var history = pane.history ?? History()
+            let current = pane.path ?? ""
+            if let step = args["back"] == true ? "back" : args["forward"] == true ? "forward" : nil {
+                guard let path = step == "back" ? history.back.popLast() : history.forward.popLast() else {
+                    throw KmuxError("bad_request", "nothing to go \(step) to")
+                }
+                if step == "back" { history.forward.append(current) } else { history.back.append(current) }
+                pane.path = path
+            } else {
+                guard let path = args["path"]?.string, !path.isEmpty else { throw KmuxError("bad_request", "missing path") }
+                let target = Self.resolve(path, from: current)
+                if target != current {
+                    history.back.append(current)
+                    history.forward = []
+                }
+                pane.path = target
+            }
+            pane.history = history
             host?.stop(pane)
             pane.state = .starting
             pane.error = nil

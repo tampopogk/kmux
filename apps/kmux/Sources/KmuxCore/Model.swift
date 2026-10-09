@@ -20,7 +20,8 @@ public final class Pane {
     public var device: String?
     /// The markdown file a `md` pane shows.
     public var path: String?
-    /// Back/forward history, kept only for web panes opened with `history: true`.
+    /// Back/forward history: of URLs for web panes opened with `history: true`;
+    /// of files, always, for markdown panes.
     public var history: History?
 
     init(id: String, name: String?, type: PaneType) {
