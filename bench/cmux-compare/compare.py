@@ -250,7 +250,12 @@ class Cmux:
 
     def call(self, method, **params):
         self.n += 1
-        r = self.c.ask({"id": self.n, "method": method, "params": params})
+        try:
+            r = self.c.ask({"id": self.n, "method": method, "params": params})
+        except (OSError, RuntimeError):
+            # cmux drops a control connection that sits idle; reconnect once and retry.
+            self.c = Socket(self.sock_path)
+            r = self.c.ask({"id": self.n, "method": method, "params": params})
         if not r.get("ok"):
             raise RuntimeError(f"cmux {method}: {r.get('error')}")
         return r.get("result") or {}
