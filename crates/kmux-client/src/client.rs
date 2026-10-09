@@ -230,6 +230,10 @@ fn launch(target: &Target) -> Result<(), Error> {
     if target.background {
         open.arg("--bg");
     }
+    // `KMUX_FRESH=1`: start with a new window, not the saved layout.
+    if brand.env("FRESH").as_deref() == Some("1") {
+        open.arg("--fresh");
+    }
     let (name, app) = (brand.name, brand.variable("APP"));
     let status = open.status().map_err(|e| Error::Unreachable(format!("could not start {name}: {e}")))?;
     if status.success() {

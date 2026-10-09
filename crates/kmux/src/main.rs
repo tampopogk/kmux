@@ -33,6 +33,10 @@ fn run(args: Vec<String>) -> Result<(), Failure> {
         None => Target::from_env(),
     };
     target.background |= background;
+    // If kmux has to be started, start it with a new window, not the saved layout.
+    if args.flag("--fresh") {
+        std::env::set_var(target.brand.variable("FRESH"), "1");
+    }
     let Some(name) = args.positional() else {
         if args.flag("--version") {
             println!("kmux {}", env!("CARGO_PKG_VERSION"));
@@ -213,7 +217,7 @@ fn overview(target: &Target) -> String {
     let mut out = String::from(
         "kmux — control the kmux terminal multiplexer (windows → tabs → split panes).\n\
          \n\
-         usage: kmux [--instance NAME] [--bg] COMMAND [ARGS] [--json]\n",
+         usage: kmux [--instance NAME] [--bg] [--fresh] COMMAND [ARGS] [--json]\n",
     );
     for group in GROUPS {
         out += &format!("\n{group}:\n");
@@ -242,7 +246,8 @@ fn overview(target: &Target) -> String {
          \n\
          {}\n\
          --json prints the reply from kmux as JSON. kmux must be running; the CLI starts it if it isn't\n\
-         (in front, or behind your other windows with --bg or KMUX_BG=1).\n\
+         (in front, or behind your other windows with --bg or KMUX_BG=1). A started kmux brings back the layout\n\
+         it saved when it last quit; --fresh (or KMUX_FRESH=1) opens a new window instead.\n\
          Instance: {} at {} (--instance NAME for another; kmux help instances).\n\
          Exit codes: 0 ok, 1 failed, 2 bad usage, 3 kmux not reachable, 4 not found, 5 not supported by the running kmux.",
         match &supported {
@@ -280,10 +285,11 @@ fn help(command: &Command, target: &Target) -> String {
 
 fn describe(supported: Option<&[String]>) -> Value {
     json!({
-        "usage": "kmux [--instance NAME] [--bg] COMMAND [ARGS] [--json]",
+        "usage": "kmux [--instance NAME] [--bg] [--fresh] COMMAND [ARGS] [--json]",
         "globalOptions": [
             { "flag": "--instance NAME", "description": "Talk to the kmux instance NAME (default: $KMUX_SOCKET, else $KMUX_INSTANCE, else default). See kmux help instances." },
             { "flag": "--bg", "description": "If kmux has to be started, keep it behind your other windows (also KMUX_BG=1)." },
+            { "flag": "--fresh", "description": "If kmux has to be started, open a new window instead of the layout it saved when it last quit (also KMUX_FRESH=1)." },
             { "flag": "--json", "description": "Print the reply as JSON." }
         ],
         "running": supported.is_some(),
