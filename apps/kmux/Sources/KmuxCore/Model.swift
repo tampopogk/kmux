@@ -23,6 +23,12 @@ public final class Pane {
     /// Back/forward history: of URLs for web panes opened with `history: true`;
     /// of files, always, for markdown panes.
     public var history: History?
+    /// Markdown panes: the magnification, kept across restarts (the host
+    /// fills it in before the layout is saved).
+    public var zoom: Double?
+    /// Terminals: reserved for re-attaching a hosted terminal session. Saved
+    /// and restored, unused for now.
+    public var session: String?
 
     init(id: String, name: String?, type: PaneType) {
         self.id = id
@@ -71,12 +77,25 @@ public final class Window {
     public var active: String?
     public var focused: String?
     public var zoomed: String?
+    /// Where the window is on screen, in the host's coordinates; saved with
+    /// the layout so a restored window comes back in place.
+    public var frame: Frame?
     /// Tabs are named "Tab 1", "Tab 2", … in the order the window made them.
     var tabCount = 0
 
     init(id: String) { self.id = id }
 
     public var activeTab: Tab? { tabs.first { $0.id == active } ?? tabs.first }
+}
+
+public struct Frame: Sendable, Equatable {
+    public var x, y, w, h: Double
+    public init(x: Double, y: Double, w: Double, h: Double) {
+        self.x = x
+        self.y = y
+        self.w = w
+        self.h = h
+    }
 }
 
 struct Location {
@@ -133,6 +152,18 @@ public final class Model {
         paneOrder.append(pane.id)
         return pane
     }
+
+    /// Replaces everything with a restored layout. IDs are never reused while
+    /// kmux runs, so the counters only move forward.
+    func install(panes: [Pane], windows: [Window], key: String?, counters: (pane: Int, tab: Int, window: Int)) {
+        self.panes = Dictionary(uniqueKeysWithValues: panes.map { ($0.id, $0) })
+        paneOrder = panes.map(\.id)
+        self.windows = windows
+        self.key = key
+        self.counters = (max(self.counters.pane, counters.pane), max(self.counters.tab, counters.tab), max(self.counters.window, counters.window))
+    }
+
+    var savedCounters: (pane: Int, tab: Int, window: Int) { counters }
 
     func forget(_ pane: Pane) {
         panes[pane.id] = nil

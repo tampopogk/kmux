@@ -38,6 +38,8 @@ public final class Core {
     public var extraCommands: [String: @MainActor (JSON) async throws -> [String: JSON]] = [:]
 
     private var waiters: [String: [CheckedContinuation<Void, Never>]] = [:]
+    /// The last state `debug.saveState` made.
+    private var savedState: JSON?
 
     public init() {}
 
@@ -98,11 +100,23 @@ public final class Core {
         case "arrange": return try arrange(args)
         case "send": return try send(args)
         case "navigate": return try await navigate(args)
+        // Persistence, for tests: the state kmux would save, and restoring one
+        // as a launch would (without `state`, the last one saved).
+        case "debug.saveState":
+            savedState = exportState()
+            return ["state": savedState!]
+        case "debug.restoreState":
+            guard let state = args["state"] ?? savedState else { throw KmuxError("bad_request", "no saved state to restore") }
+            try restoreState(state)
+            return ["windows": .array(model.windows.map { .string($0.id) }), "panes": .array(model.paneOrder.map(JSON.string))]
         default:
             guard let extra = extraCommands[cmd] else { throw KmuxError("bad_request", "unknown command \"\(cmd)\"") }
             return try await extra(args)
         }
     }
+
+    /// Commands for tests that this core handles but `capabilities` doesn't list.
+    public static let debugCommands: Set<String> = ["debug.saveState", "debug.restoreState"]
 
     /// The commands this core handles, besides `extraCommands`.
     public static let commands: Set<String> = [

@@ -28,7 +28,7 @@ import Testing
                 guard case .array(let steps) = testCase["steps"] ?? nil else { continue }
                 let missing = steps.compactMap { step -> String? in
                     let send = step["send"] ?? nil
-                    if let cmd = send["cmd"]?.string, !Core.commands.contains(cmd), cmd != "nope" { return cmd }
+                    if let cmd = send["cmd"]?.string, !Core.commands.contains(cmd), !Core.debugCommands.contains(cmd), cmd != "nope" { return cmd }
                     if send["cmd"] == "open", let type = send["args"]?["type"]?.string, ["term", "web", "ios"].contains(type), !paneTypes.contains(type) { return "\(type) panes" }
                     return nil
                 }
