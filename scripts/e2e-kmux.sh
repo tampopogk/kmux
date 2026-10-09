@@ -13,7 +13,8 @@ cli="$repo_root/target/release/kmux"
 
 "$repo_root/target/kmux.app/Contents/MacOS/kmux" --bg >"$out/kmux.log" 2>&1 &
 kmux_pid=$!
-trap 'kill $kmux_pid 2>/dev/null || true; rm -f "$KMUX_SOCKET"' EXIT
+state_file="${KMUX_SOCKET%.sock}.state.json" # its saved layout, private like the socket
+trap 'kill $kmux_pid 2>/dev/null || true; rm -f "$KMUX_SOCKET" "$state_file"' EXIT
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 for _ in $(seq 50); do [[ -S "$KMUX_SOCKET" ]] && break; sleep 0.1; done
@@ -87,7 +88,7 @@ web() { raw "{\"id\":1,\"cmd\":\"debug.web\",\"args\":{\"pane\":\"site\"}}"; }
 mkdir -p "$out/site" && echo '<h1>KMUX WEB OK</h1>' > "$out/site/index.html"
 (cd "$out/site" && exec python3 -m http.server "$port" --bind 127.0.0.1 >/dev/null 2>&1) &
 server_pid=$!
-trap 'kill $kmux_pid $server_pid 2>/dev/null || true; rm -f "$KMUX_SOCKET"' EXIT
+trap 'kill $kmux_pid $server_pid 2>/dev/null || true; rm -f "$KMUX_SOCKET" "$state_file"' EXIT
 for _ in $(seq 30); do [[ "$(field text <<<"$(web)")" == *"KMUX WEB OK"* ]] && break; sleep 0.5; done
 [[ "$(field text <<<"$(web)")" == *"KMUX WEB OK"* ]] || fail "web pane never loaded: $(web)"
 "$cli" navigate site "localhost:$port/missing" >/dev/null
@@ -194,9 +195,10 @@ drawn dragged "*"
 # windows. kmux run inside one of its panes controls that instance.
 other="e2e$$"
 other_socket="$HOME/Library/Application Support/kmux/kmux-$other.sock"
-env -u KMUX_SOCKET "$repo_root/target/kmux.app/Contents/MacOS/kmux" --bg --instance "$other" >"$out/kmux-$other.log" 2>&1 &
+# (KMUX_NO_STATE: its socket is in the real kmux folder, so it keeps no saved layout there.)
+env -u KMUX_SOCKET KMUX_NO_STATE=1 "$repo_root/target/kmux.app/Contents/MacOS/kmux" --bg --instance "$other" >"$out/kmux-$other.log" 2>&1 &
 other_pid=$!
-trap 'kill $kmux_pid $server_pid $other_pid 2>/dev/null || true; rm -f "$KMUX_SOCKET"' EXIT
+trap 'kill $kmux_pid $server_pid $other_pid 2>/dev/null || true; rm -f "$KMUX_SOCKET" "$state_file"' EXIT
 for _ in $(seq 50); do [[ -S "$other_socket" ]] && break; sleep 0.1; done
 [[ -S "$other_socket" ]] || fail "instance $other did not open $other_socket"
 [[ "$(field instance <<<"$("$cli" --instance "$other" capabilities --json)")" == "$other" ]] || fail "capabilities should name the instance"
@@ -334,5 +336,83 @@ if [[ "${KMUX_E2E_IOS:-1}" != 0 ]] && xcrun simctl list devices available 2>/dev
   [[ "$(ink home)" != "$settings" ]] || fail "Home did not change the screen"
   "$cli" close "$phone" >/dev/null
 fi
+
+# 10. Persistence: a layout comes back after kmux restarts. A second kmux on
+# its own private socket (so its state file is private too) builds a layout,
+# is stopped with SIGTERM (saving on quit) and started again on the same file.
+p_socket="/tmp/kmux-e2e-$$-p.sock"
+p_state="/tmp/kmux-e2e-$$-p.state.json"
+p_start() { KMUX_SOCKET="$p_socket" "$repo_root/target/kmux.app/Contents/MacOS/kmux" --bg "$@" >>"$out/kmux-persist.log" 2>&1 &
+  p_pid=$!
+  for _ in $(seq 50); do [[ -S "$p_socket" ]] && break; sleep 0.1; done
+  [[ -S "$p_socket" ]] || fail "the persistence kmux did not open $p_socket"; }
+p_stop() { kill -TERM "$p_pid"; wait "$p_pid" 2>/dev/null || true; [[ ! -e "$p_socket" ]] || fail "kmux should remove its socket when it quits"; }
+p_cli() { KMUX_SOCKET="$p_socket" "$cli" "$@"; }
+p_raw() { KMUX_SOCKET="$p_socket" raw "$1"; }
+trap 'kill $kmux_pid $server_pid ${p_pid:-} 2>/dev/null || true; rm -f "$KMUX_SOCKET" "$state_file" "$p_socket" "$p_state" "$p_state.bad"' EXIT
+rm -f "$p_state" "$p_state.bad"
+# What a restore must bring back: everything in `list` except whether panes have started yet.
+p_layout() { p_cli list --json | python3 -c 'import json, sys
+d = json.load(sys.stdin)
+for p in d["panes"]:
+    for k in ("state", "exitCode", "error"): p.pop(k, None)
+print(json.dumps(d, sort_keys=True))'; }
+p_frames() { python3 -c 'import json, sys; print(json.dumps([w.get("frame") for w in json.load(open(sys.argv[1]))["windows"]]))' "$p_state"; }
+mkdir -p "$out/persist"
+p_start
+p_cli open --name srv --cwd "$out/persist" --cmd "printf 'PERSIST %s\n' \"\$(pwd)\"; exec sleep 600" >/dev/null
+p_cli open web "localhost:$port" --name site --history --split right --size 1/3 >/dev/null
+p_cli open md "$out/docs/spec.md" --name doc --split down --size 1/4 >/dev/null
+p_cli open --name sh2 --tab >/dev/null
+p_cli rename-tab "$(field windows.0.tabs.1.id <<<"$(p_cli list --json)")" shells >/dev/null
+sleep 1
+p_cli send sh2 "cd /usr/bin" # the shell reports its new directory (OSC 7)
+p_cli open --name logs --window new >/dev/null
+p_cli open web "localhost:$port/two.html" --split down >/dev/null
+p_cli focus doc >/dev/null
+p_raw '{"id":1,"cmd":"debug.key","args":{"key":"cmd+="}}' >/dev/null
+p_cli focus site >/dev/null
+p_cli zoom site >/dev/null
+sleep 1.5
+before="$(p_layout)"
+[[ "$before" == *'"cwd": "/usr/bin"'* ]] || fail "a terminal's cwd should follow the shell: $before"
+[[ -f "$p_state" && "$(stat -f %Lp "$p_state")" == 600 ]] || fail "the layout should be saved (mode 600) soon after a change: $(ls -l "$p_state" 2>&1)"
+python3 - "$p_state" <<'PY' || fail "the debounced save should hold the whole layout: $(cat "$p_state")"
+import json, sys
+s = json.load(open(sys.argv[1]))
+assert s["version"] == 1 and len(s["windows"]) == 2, s
+assert [t["title"] for t in s["windows"][0]["tabs"]] == ["Tab 1", "shells"], s
+assert {p["name"]: p.get("cwd") for p in s["panes"]}["sh2"] == "/usr/bin", s
+assert all(w.get("frame") for w in s["windows"]), s
+PY
+frames="$(p_frames)"
+p_stop
+[[ -f "$p_state" ]] || fail "the layout should still be saved after quitting"
+p_start
+sleep 2
+after="$(p_layout)"
+[[ "$after" == "$before" ]] || fail "the restored layout differs:
+before: $before
+after:  $after"
+for _ in $(seq 20); do [[ "$(field text <<<"$(p_raw '{"id":1,"cmd":"debug.text","args":{"pane":"srv"}}')")" == *"PERSIST $out/persist"* ]] && break; sleep 0.25; done
+[[ "$(field text <<<"$(p_raw '{"id":1,"cmd":"debug.text","args":{"pane":"srv"}}')")" == *"PERSIST $out/persist"* ]] || fail "srv should run its command again in its cwd"
+[[ "$(field zoom <<<"$(p_raw '{"id":1,"cmd":"debug.md","args":{"pane":"doc"}}')")" == 1.1 ]] || fail "doc should keep its zoom"
+for _ in $(seq 20); do [[ "$(field text <<<"$(p_raw '{"id":1,"cmd":"debug.web","args":{"pane":"site"}}')")" == *"KMUX WEB OK"* ]] && break; sleep 0.25; done
+[[ "$(field text <<<"$(p_raw '{"id":1,"cmd":"debug.web","args":{"pane":"site"}}')")" == *"KMUX WEB OK"* ]] || fail "site should load its URL again"
+[[ "$(p_frames)" == "$frames" ]] || fail "windows should come back where they were: $frames → $(p_frames)"
+[[ "$(field pane.id <<<"$(p_cli open --name new --json)")" == p8 ]] || fail "pane IDs should carry on after the restored ones"
+p_stop
+# A file kmux can't read is set aside, and kmux starts fresh; so does --fresh.
+echo '{ "version": 1, "windows": [' >"$p_state"
+p_start
+sleep 1
+[[ "$(p_cli list --json | python3 -c 'import json, sys; d = json.load(sys.stdin); print(len(d["windows"]), len(d["panes"]))')" == "1 1" ]] || fail "a bad state file should give a fresh window"
+[[ -f "$p_state.bad" ]] || fail "the bad state file should be kept aside"
+p_stop
+p_start --fresh
+sleep 1
+[[ "$(p_cli list --json | python3 -c 'import json, sys; print(len(json.load(sys.stdin)["panes"]))')" == 1 ]] || fail "--fresh should start with one new window"
+p_stop
+rm -f "$p_state" "$p_state.bad"
 
 echo "e2e OK (snapshot: $out/two-panes.png)"

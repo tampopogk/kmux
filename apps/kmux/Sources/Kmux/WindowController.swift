@@ -16,6 +16,8 @@ final class WindowController: NSObject, NSWindowDelegate {
     let tabBar = TabBar()
     var onCloseRequest: (() -> Void)?
     var onBecomeKey: (() -> Void)?
+    /// The window moved or was resized.
+    var onFrameChange: (() -> Void)?
 
     /// Named instances show their name in the title, to tell them apart.
     let instance: Instance
@@ -112,6 +114,8 @@ final class WindowController: NSObject, NSWindowDelegate {
         return false
     }
 
+    func windowDidMove(_ notification: Notification) { onFrameChange?() }
+    func windowDidResize(_ notification: Notification) { onFrameChange?() }
     func windowDidBecomeKey(_ notification: Notification) { onBecomeKey?() }
     func windowDidResignKey(_ notification: Notification) { onBecomeKey?() }
 }

@@ -20,6 +20,8 @@ final class ContentHost: PaneHost {
     var onOpenMarkdown: ((String, String) -> Void)?
     /// A markdown pane's mouse back (true) or forward (false) button.
     var onMarkdownHistory: ((String, Bool) -> Void)?
+    /// Something worth saving changed inside a pane (a markdown pane's zoom).
+    var onPaneChange: (() -> Void)?
     /// Where each file was left in each markdown pane (scroll, magnification),
     /// so going back returns to it.
     private var markdownSpots: [String: [String: (y: CGFloat, zoom: CGFloat)]] = [:]
@@ -65,9 +67,10 @@ final class ContentHost: PaneHost {
                 failure = directory.boolValue ? "\(path) is a folder, not a markdown file" : "No such file: \(path)"
             } else {
                 let spot = markdownSpots[id]?[path]
-                let markdown = MarkdownPaneView(path: path, zoom: spot?.zoom ?? markdownZoom[id] ?? 1)
+                let markdown = MarkdownPaneView(path: path, zoom: spot?.zoom ?? markdownZoom[id] ?? pane.zoom.map { CGFloat($0) } ?? 1)
                 markdown.startScrollY = spot?.y
                 markdown.onHistory = { [weak self] back in self?.onMarkdownHistory?(id, back) }
+                markdown.onZoom = { [weak self] in self?.onPaneChange?() }
                 markdown.onFocus = { [weak self] in self?.onFocus?(id) }
                 markdown.onOpenMarkdown = { [weak self] target in self?.onOpenMarkdown?(id, target) }
                 markdown.contextMenu = { [weak self] in self?.contextMenu?() }

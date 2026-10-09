@@ -19,6 +19,11 @@ final class AppController: NSObject, NSApplicationDelegate {
     /// Started with `--bg` (or `KMUX_BG=1`, `KANNA_BG=1` in Kanna), e.g. by tests: don't take over the screen.
     private let background = CommandLine.arguments.contains("--bg") || ProcessInfo.processInfo.environment[Brand.current.variable("BG")] == "1"
     private var controllers: [String: WindowController] = [:]
+    /// Where the layout is saved (docs/kmux-spec.md §3.6); nil when this kmux
+    /// doesn't keep one (`KMUX_NO_STATE=1`, or `KMUX_NO_INITIAL_WINDOW` for benchmarks).
+    private var stateFile: StateFile?
+    private var saveTimer: Timer?
+    private var lastSaved: Data?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         do {
@@ -47,7 +52,11 @@ final class AppController: NSObject, NSApplicationDelegate {
         host.contextMenu = { [weak self] in self?.paneMenu?.copy() as? NSMenu }
         host.onCloseRequest = { [weak self] id in self?.request(["cmd": "close", "args": ["pane": .string(id)]]) }
         core.host = host
-        core.onChange = { [weak self] in self?.sync() }
+        core.onChange = { [weak self] in
+            self?.sync()
+            self?.scheduleSave()
+        }
+        host.onPaneChange = { [weak self] in self?.scheduleSave() }
         core.paneIsWide = { [weak self] id in
             guard let bounds = self?.host.views[id]?.bounds, bounds.height > 0 else { return true }
             return bounds.width >= bounds.height
@@ -169,10 +178,74 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
         installMenu()
         if !background { NSApp.activate() }
-        if ProcessInfo.processInfo.environment["KMUX_NO_INITIAL_WINDOW"] == nil { newWindow() }
+        let environment = ProcessInfo.processInfo.environment
+        if environment["KMUX_NO_INITIAL_WINDOW"] == nil {
+            // KMUX_NO_STATE=1: neither restore nor save a layout (tests on shared sockets).
+            if environment["KMUX_NO_STATE"] != "1" { stateFile = StateFile(path: StateFile.path(for: instance)) }
+            // `--fresh` (or KMUX_FRESH=1) starts with a new window; the saved layout is replaced at the next save.
+            let fresh = CommandLine.arguments.contains("--fresh") || environment[Brand.current.variable("FRESH")] == "1"
+            if fresh || !restoreLayout() { newWindow() }
+        }
     }
 
-    func applicationWillTerminate(_ notification: Notification) { server?.stop() }
+    func applicationWillTerminate(_ notification: Notification) {
+        saveTimer?.invalidate()
+        saveLayout()
+        server?.stop()
+    }
+
+    // MARK: Persistence (docs/kmux-spec.md §3.6)
+
+    /// Restores the saved layout, if there is one kmux can trust and read.
+    /// Anything else is moved aside (…json.bad) and kmux starts fresh: a bad
+    /// file never stops kmux from starting.
+    private func restoreLayout() -> Bool {
+        guard let file = stateFile else { return false }
+        switch file.load() {
+        case .none:
+            return false
+        case .refused(let why):
+            NSLog("kmux: not restoring the saved layout: \(why); moved to \(file.setAside() ?? "nowhere")")
+            return false
+        case .state(let state):
+            do {
+                try core.restoreState(state)
+            } catch {
+                NSLog("kmux: not restoring the saved layout: \((error as? KmuxError)?.message ?? "\(error)"); moved to \(file.setAside() ?? "nowhere")")
+                return false
+            }
+            return !core.model.windows.isEmpty
+        }
+    }
+
+    /// Saves the layout half a second after a change (later changes ride
+    /// along; a save that would change nothing writes nothing).
+    private func scheduleSave() {
+        guard stateFile != nil, saveTimer?.isValid != true else { return }
+        saveTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.saveLayout() }
+        }
+    }
+
+    private func saveLayout() {
+        guard let file = stateFile else { return }
+        for (id, controller) in controllers {
+            let frame = controller.window.frame
+            core.model.window(id)?.frame = Frame(x: frame.minX, y: frame.minY, w: frame.width, h: frame.height)
+        }
+        for pane in core.model.panes.values where pane.type == .md {
+            if let zoom = host.markdown(pane.id)?.zoom { pane.zoom = Double(zoom) }
+        }
+        let state = core.exportState()
+        let data = state.encoded()
+        guard data != lastSaved else { return }
+        do {
+            try file.write(state)
+            lastSaved = data
+        } catch {
+            NSLog("kmux: could not save the layout: \((error as? KmuxError)?.message ?? "\(error)")")
+        }
+    }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
@@ -201,9 +274,16 @@ final class AppController: NSObject, NSApplicationDelegate {
     private func makeController(_ id: String) -> WindowController {
         let previous = controllers.values.map(\.window).max { $0.orderedIndex > $1.orderedIndex }
         let controller = WindowController(id: id, instance: instance, cascadeFrom: previous)
+        // A restored window goes back where it was, if that is still on a screen.
+        if let saved = core.model.window(id)?.frame {
+            let frame = NSRect(x: saved.x, y: saved.y, width: saved.w, height: saved.h)
+            if NSScreen.screens.contains(where: { $0.visibleFrame.intersects(frame) }) { controller.window.setFrame(frame, display: false) }
+        }
+        controller.onFrameChange = { [weak self] in self?.scheduleSave() }
         controller.relayout = { [weak self, weak controller] in
             guard let self, let controller else { return }
             controller.render(core.model, host)
+            scheduleSave() // e.g. a divider dragged
         }
         controller.tabBar.onSelect = { [weak self] tab in self?.request(["cmd": "focus", "args": ["tab": .string(tab)]]) }
         controller.tabBar.onClose = { [weak self] tab in self?.request(["cmd": "close", "args": ["tab": .string(tab)]]) }
@@ -234,6 +314,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         window.focused = paneID
         window.activeTab?.lastFocus = paneID
         controllers[window.id]?.render(core.model, host)
+        scheduleSave()
     }
 
     // MARK: Actions
@@ -410,6 +491,15 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     /// Mux actions from Ghostty keybindings that no menu item took.
     private func ghosttyAction(_ paneID: String, _ action: ghostty_action_s) -> Bool {
+        // The shell reported its working directory (OSC 7): a restored
+        // terminal starts there.
+        if action.tag == GHOSTTY_ACTION_PWD {
+            if let pwd = action.action.pwd.pwd, let pane = core.model.panes[paneID] {
+                pane.cwd = String(cString: pwd)
+                scheduleSave()
+            }
+            return true
+        }
         let perform: (() -> Void)?
         switch action.tag {
         case GHOSTTY_ACTION_NEW_SPLIT:

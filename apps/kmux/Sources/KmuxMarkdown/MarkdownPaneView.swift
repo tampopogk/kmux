@@ -16,6 +16,8 @@ public final class MarkdownPaneView: NSView, NSTextViewDelegate {
     /// Back (true) or forward (false): the mouse's buttons 4 and 5, or a
     /// two-finger swipe sideways.
     public var onHistory: ((Bool) -> Void)?
+    /// The magnification changed (a zoom key, or the end of a pinch).
+    public var onZoom: (() -> Void)?
     /// Where to scroll once the pane is first laid out (returning to a file).
     public var startScrollY: CGFloat?
     /// kmux's pane menu, added below the text view's own items on a right-click.
@@ -36,6 +38,7 @@ public final class MarkdownPaneView: NSView, NSTextViewDelegate {
     private var document = Document(parsing: "")
     private var stamp: (Date, Int)?
     private var poll: Timer?
+    private var magnifyObserver: NSObjectProtocol?
 
     public init(path: String, zoom: CGFloat = 1) {
         self.path = path
@@ -60,6 +63,9 @@ public final class MarkdownPaneView: NSView, NSTextViewDelegate {
         addSubview(scrollView)
         textView.delegate = self
         scrollView.onSwipe = { [weak self] back in self?.onHistory?(back) }
+        magnifyObserver = NotificationCenter.default.addObserver(forName: NSScrollView.didEndLiveMagnifyNotification, object: scrollView, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.onZoom?() }
+        }
         load()
         poll = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.reloadIfChanged() }
@@ -90,6 +96,8 @@ public final class MarkdownPaneView: NSView, NSTextViewDelegate {
     public func stop() {
         poll?.invalidate()
         poll = nil
+        magnifyObserver.map(NotificationCenter.default.removeObserver)
+        magnifyObserver = nil
     }
 
     public override func layout() {
@@ -166,6 +174,7 @@ public final class MarkdownPaneView: NSView, NSTextViewDelegate {
         let target = step == 0 ? 1 : step > 0 ? (steps.first { $0 > now + 0.001 } ?? steps.last!) : (steps.last { $0 < now - 0.001 } ?? steps.first!)
         let visible = scrollView.contentView.bounds
         scrollView.setMagnification(target, centeredAt: NSPoint(x: visible.midX, y: visible.midY))
+        onZoom?()
     }
 
     // MARK: Reading position (as in kanna-v3's doc view)
