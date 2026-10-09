@@ -39,7 +39,14 @@ final class PaneView: NSView {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         trackingAreas.forEach(removeTrackingArea)
-        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
+        // A tracking area made while the mouse is already inside never reports
+        // the exit unless told so, and the grip would stay up (e.g. on the pane
+        // just clicked, whose layout was rebuilt).
+        let inside = window.map { bounds.contains(convert($0.mouseLocationOutsideOfEventStream, from: nil)) } ?? false
+        var options: NSTrackingArea.Options = [.mouseEnteredAndExited, .activeAlways, .inVisibleRect]
+        if inside { options.insert(.assumeInside) }
+        addTrackingArea(NSTrackingArea(rect: bounds, options: options, owner: self))
+        grip.isHidden = !inside
     }
 
     override func mouseEntered(with event: NSEvent) { grip.isHidden = false }
