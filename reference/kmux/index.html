@@ -378,6 +378,7 @@ $('#cmd').addEventListener('keydown', e => {
 // Rendering
 // ---------------------------------------------------------------------------
 function render() {
+  scheduleSave();
   for (const w of S.windows) {
     const t = activeTabOf(w);
     if (t && locate(t.root, w.focused)) t.lastFocus = w.focused;
@@ -699,6 +700,8 @@ function magnify(view, z, ax = view.clientWidth / 2, ay = view.clientHeight / 2)
   sizer.style.width = view.clientWidth * z + 'px';
   sizer.style.height = inner.offsetHeight * z + 'px';
   view._z = mdZoom[view.dataset.pane] = z;
+  if (S.panes[view.dataset.pane]) S.panes[view.dataset.pane].zoom = z;
+  scheduleSave();
   view.scrollLeft = x * z - ax;
   view.scrollTop = y * z - ay;
 }
@@ -730,7 +733,7 @@ function mdView(p) {
     magnify(view, view._z * Math.exp(-e.deltaY / 100), e.clientX - box.left, e.clientY - box.top);
   }, { passive: false });
   requestAnimationFrame(() => {
-    magnify(view, mdZoom[p.id] || 1, 0, 0);
+    magnify(view, mdZoom[p.id] || p.zoom || 1, 0, 0);
     view.scrollTop = mdScroll[p.id] || 0;
     const fit = () => magnify(view, view._z, 0, 0); // diagrams change the page's height
     if (window.mermaid) mermaid.run({ nodes: page.querySelectorAll('.mermaid') }).then(fit, fit);
@@ -1059,7 +1062,32 @@ $('#demo').addEventListener('click', async () => {
 });
 $('#reset').addEventListener('click', () => { if (!demoRunning) reset(); });
 
-reset();
+// Persistence: like kmux, the page saves the layout (debounced) after every
+// change and restores it when it loads, so reloading the page is restarting
+// kmux. Terminals come back as new terminals running their command again.
+// Reset starts fresh; a saved layout that can't be read is ignored.
+const STATE_KEY = 'kmux-model-state';
+let saveTimer = null;
+function scheduleSave() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => { try { localStorage.setItem(STATE_KEY, JSON.stringify(exportState())); } catch {} }, 500);
+}
+function boot() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(STATE_KEY)); } catch {}
+  if (saved) {
+    try {
+      reset(false);
+      restoreState(saved);
+      if (S.windows.length) return log('info', 'Restored the layout saved when the page was last open (reloading is restarting kmux; Reset starts fresh).');
+    } catch (e) {
+      reset();
+      return log('err', `The saved layout was not restored: ${e.message}`);
+    }
+  }
+  reset();
+}
+boot();
 </script>
 </body>
 </html>

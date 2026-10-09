@@ -325,6 +325,137 @@ function summary(p) {
 }
 
 // ---------------------------------------------------------------------------
+// Persistence (docs/kmux-spec.md §3.6): the layout as a versioned state. kmux
+// saves it as the layout changes and on quit, and restores it on launch.
+// Panes keep their IDs; terminals come back as new terminals (cwd, cmd), web
+// panes reload their URL, md panes their file, iOS panes relaunch their app.
+// state := { kmux: 'state', version, key, counters: { pane, tab, window },
+//            windows: [{ id, frame?, active, focused, zoomed, tabCount,
+//                        tabs: [{ id, title, lastFocus, layout }] }],
+//            panes: [{ id, name, type, …what it shows }] }
+// layout := { pane: ID } | { split: 'row'|'column', children: [{ …layout, size }] }
+// ---------------------------------------------------------------------------
+const STATE_VERSION = 1;
+let savedState = null;
+const PANE_FIELDS = { term: ['cmd', 'cwd', 'session'], web: ['url'], md: ['path'], ios: ['app', 'device'] };
+
+function exportNode(node) {
+  return node.t === 'pane' ? { pane: node.id }
+    : { split: node.dir, children: node.kids.map(k => ({ ...exportNode(k.node), size: k.size })) };
+}
+function exportPane(p) {
+  const out = { id: p.id, name: p.name, type: p.type };
+  for (const f of PANE_FIELDS[p.type]) out[f] = p[f] ?? null;
+  if (p.type === 'web') out.history = !!p.history;
+  if (p.type === 'md') out.zoom = p.zoom ?? 1;
+  return out;
+}
+function exportState() {
+  return {
+    kmux: 'state', version: STATE_VERSION, key: S.key,
+    counters: { pane: S.n.pane, tab: S.n.tab, window: S.n.win },
+    windows: S.windows.map(w => ({
+      id: w.id, frame: { x: w.x, y: w.y, w: w.w, h: w.h }, active: w.active, focused: w.focused, zoomed: w.zoomed, tabCount: w.tabCount,
+      tabs: w.tabs.map(t => ({ id: t.id, title: t.title, lastFocus: t.lastFocus, layout: exportNode(t.root) })),
+    })),
+    panes: Object.values(S.panes).map(exportPane),
+  };
+}
+
+/// Checks a saved state and builds the model state it describes, or throws
+/// bad_request. Lenient where it can repair (dangling focus, empty tabs), strict
+/// about anything that would make the layout ambiguous.
+function importState(st) {
+  const bad = msg => kerr('bad_request', `bad state: ${msg}`);
+  const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
+  const str = v => typeof v === 'string' ? v : null;
+  const num = (id, prefix) => Number(id.slice(prefix.length));
+  if (!isObj(st)) throw bad('not an object');
+  if (st.version !== STATE_VERSION) throw kerr('bad_request', `unsupported state version ${JSON.stringify(st.version ?? null)} (this kmux reads ${STATE_VERSION})`);
+  if (!Array.isArray(st.panes) || !Array.isArray(st.windows)) throw bad('needs panes and windows');
+  const N = freshState();
+  const saved = isObj(st.counters) ? st.counters : {};
+  N.n.pane = Number.isInteger(saved.pane) ? saved.pane : 0;
+  N.n.tab = Number.isInteger(saved.tab) ? saved.tab : 0;
+  N.n.win = Number.isInteger(saved.window) ? saved.window : 0;
+  const names = new Set();
+  for (const sp of st.panes) {
+    if (!isObj(sp) || !/^p[1-9]\d*$/.test(sp.id ?? '') || N.panes[sp.id]) throw bad(`pane ${JSON.stringify(sp?.id ?? null)}`);
+    if (!PANE_FIELDS[sp.type]) throw bad(`pane ${sp.id} has unknown type ${JSON.stringify(sp.type ?? null)}`);
+    const name = str(sp.name);
+    if (name != null && (names.has(name) || !name)) throw bad(`pane name ${JSON.stringify(name)} is used twice`);
+    if (name) names.add(name);
+    const need = { web: 'url', md: 'path', ios: 'app' }[sp.type];
+    if (need && !str(sp[need])) throw bad(`${sp.type} pane ${sp.id} has no ${need}`);
+    const p = {
+      id: sp.id, name: name || null, type: sp.type, state: 'starting', error: null, gen: 0, waiters: [],
+      cmd: str(sp.cmd), cwd: str(sp.cwd) ?? (sp.type === 'term' ? '~' : null), url: str(sp.url), session: str(sp.session),
+      history: (sp.type === 'web' && sp.history === true) || sp.type === 'md' ? { back: [], forward: [] } : null,
+      app: str(sp.app), device: str(sp.device) ?? 'iPhone 16', path: str(sp.path),
+      zoom: sp.type === 'md' && typeof sp.zoom === 'number' && sp.zoom > 0 ? sp.zoom : null,
+      lines: [], draft: '', busy: false, server: null, exitCode: null,
+    };
+    N.panes[p.id] = p;
+    N.n.pane = Math.max(N.n.pane, num(p.id, 'p'));
+  }
+  const placed = new Set(), tabIds = new Set(), winIds = new Set();
+  const build = n => {
+    if (!isObj(n)) throw bad('malformed layout');
+    if (n.pane != null) {
+      if (!N.panes[n.pane]) throw bad(`layout names unknown pane ${JSON.stringify(n.pane)}`);
+      if (placed.has(n.pane)) throw bad(`pane ${n.pane} is placed twice`);
+      placed.add(n.pane);
+      return { t: 'pane', id: n.pane };
+    }
+    if (!['row', 'column'].includes(n.split) || !Array.isArray(n.children) || !n.children.length) throw bad('malformed layout');
+    const sizes = n.children.map(c => isObj(c) && typeof c.size === 'number' && c.size > 0 && c.size <= 1 ? c.size : 1 / n.children.length);
+    const total = sizes.reduce((a, s) => a + s, 0);
+    return { t: 'split', dir: n.split, kids: n.children.map((c, i) => ({ node: build(c), size: sizes[i] / total })) };
+  };
+  for (const sw of st.windows) {
+    if (!isObj(sw) || !/^w[1-9]\d*$/.test(sw.id ?? '') || winIds.has(sw.id) || !Array.isArray(sw.tabs)) throw bad(`window ${JSON.stringify(sw?.id ?? null)}`);
+    winIds.add(sw.id);
+    const f = isObj(sw.frame) ? sw.frame : {};
+    const geo = ['x', 'y', 'w', 'h'].every(k => Number.isFinite(f[k])) && f.w > 0 && f.h > 0 ? { x: f.x, y: f.y, w: f.w, h: f.h } : { x: 24, y: 18, w: 600, h: 400 };
+    const w = { id: sw.id, tabs: [], tabCount: 0, active: str(sw.active), focused: str(sw.focused), zoomed: str(sw.zoomed), ...geo, z: ++N.n.z };
+    for (const stab of sw.tabs) {
+      if (!isObj(stab) || !/^t[1-9]\d*$/.test(stab.id ?? '') || tabIds.has(stab.id)) throw bad(`tab ${JSON.stringify(stab?.id ?? null)}`);
+      tabIds.add(stab.id);
+      const root = stab.layout == null ? null : normalize(build(stab.layout));
+      const ids = paneIds(root);
+      const title = str(stab.title)?.trim() || `Tab ${w.tabs.length + 1}`;
+      w.tabs.push({ id: stab.id, root, title, lastFocus: ids.includes(stab.lastFocus) ? stab.lastFocus : null });
+      N.n.tab = Math.max(N.n.tab, num(stab.id, 't'));
+    }
+    w.tabs = w.tabs.filter(t => t.root);
+    if (!w.tabs.some(t => t.id === w.active)) w.active = w.tabs[0]?.id ?? null;
+    const shown = paneIds(activeTabOf(w)?.root);
+    if (!shown.includes(w.focused)) w.focused = shown.includes(activeTabOf(w)?.lastFocus) ? activeTabOf(w).lastFocus : shown[0] ?? null;
+    if (!shown.includes(w.zoomed)) w.zoomed = null;
+    w.tabCount = Math.max(Number.isInteger(sw.tabCount) ? sw.tabCount : 0, w.tabs.length);
+    N.windows.push(w);
+    N.n.win = Math.max(N.n.win, num(w.id, 'w'));
+  }
+  // Panes no tab shows are not restored.
+  for (const id of Object.keys(N.panes)) if (!placed.has(id)) delete N.panes[id];
+  N.key = str(st.key);
+  return N;
+}
+
+/// Replaces everything with a saved state, as kmux does when it launches:
+/// the old panes stop, the restored ones start.
+function restoreState(st) {
+  const N = importState(st);
+  Object.values(S.panes).forEach(kill);
+  // IDs are never reused while kmux runs, even across a restore.
+  N.n = { ...N.n, pane: Math.max(N.n.pane, S.n.pane), tab: Math.max(N.n.tab, S.n.tab), win: Math.max(N.n.win, S.n.win) };
+  S = N;
+  dropEmpty();
+  Object.values(S.panes).forEach(start);
+  hooks.render();
+}
+
+// ---------------------------------------------------------------------------
 // kmux core: handles control-protocol requests (see docs/kmux-spec.md §7)
 // ---------------------------------------------------------------------------
 function focusPane(p) {
@@ -592,6 +723,19 @@ async function handle(req) {
         start(p);
         await settled(p);
         return ok({ pane: summary(p) });
+      }
+
+      // Persistence, for tests: the state kmux would save, and restoring one as
+      // a launch would (without `state`, the last one saved).
+      case 'debug.saveState':
+        savedState = exportState();
+        return ok({ state: JSON.parse(JSON.stringify(savedState)) });
+
+      case 'debug.restoreState': {
+        const st = args.state ?? savedState;
+        if (!st) throw kerr('bad_request', 'no saved state to restore');
+        restoreState(JSON.parse(JSON.stringify(st)));
+        return ok({ windows: S.windows.map(w => w.id), panes: Object.keys(S.panes) });
       }
 
       default:
