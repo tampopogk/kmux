@@ -51,7 +51,8 @@ flowchart LR
 | Shortcuts and menus | ✅ | The browser keeps ⌘N, ⌘T, ⌘W, ⇧⌘W and ⌘\`, so the model also accepts ⌥ in place of ⌘. |
 | Control-protocol commands and replies | ✅ | The model's console (marked **MOCKUP ONLY**) stands in for kanna. It is not part of kmux. |
 | Real terminals, web views, markdown rendering and simulators | ❌ | Simulated. See [section 8](#8-decisions-and-open-questions). |
-| Transport (socket), persistence, performance | ❌ | See [section 8](#8-decisions-and-open-questions). |
+| Persistence: the layout coming back after a restart | ✅ | Reloading the model's page is restarting kmux; **Reset** starts fresh. See [3.6](#36-persistence). |
+| Transport (socket), performance | ❌ | See [section 8](#8-decisions-and-open-questions). |
 
 ---
 
@@ -133,6 +134,35 @@ kmux launches in front by default. With `--bg` (on the app or the CLI, or `KMUX_
 
 - kmux launches without becoming the active app.
 - While it isn't the active app, windows it opens or focuses go **just behind** the front window of the app in use, not on top of it. Once the user switches to kmux, windows come to the front as usual.
+
+### 3.6 Persistence
+
+When kmux starts again, its layout comes back: windows where they were, their tabs (titles, order, the active tab), the splits and their sizes, focus and zoom, pane names, and what each pane shows. Panes keep their IDs.
+
+| Pane | Saved | When kmux starts again |
+|------|-------|------------------------|
+| `term` | `cmd`; `cwd` (the shell's current directory when it reports one, else the one it started in) | A **new** terminal in that directory, running `cmd` again. The old output and processes are gone. |
+| `web` | `url`, whether it keeps `history` | Loads the URL again (with empty history). |
+| `md` | `path`, magnification | Shows the file again at that magnification. |
+| `ios` | `app`, `device` | Relaunches the app on the device. |
+
+```mermaid
+flowchart LR
+    CH["a change<br/>(layout, focus, a window moved, a shell's cd)"] -->|"½ s later"| W["write state-default.json<br/>(temp file, then rename)"]
+    Q["quit, SIGTERM"] --> W
+    L["launch"] --> R{"state file?"}
+    R -->|"none, or --fresh"| N["a new window"]
+    R -->|"kmux wrote it, and it reads"| B["the saved layout"]
+    R -->|"anything else"| A["moved to ….json.bad"] --> N
+```
+
+- **Where:** one file per instance, next to its socket: `~/Library/Application Support/kmux/state-default.json` (`state-work.json` for an instance named `work`). A kmux on a socket elsewhere (`$KMUX_SOCKET`, as tests use) keeps it beside that socket: `/tmp/x.sock` → `/tmp/x.state.json`. Other brands use their own folder (Kanna: `…/kanna/`).
+- **When:** half a second after a change, and when kmux quits (⌘Q, SIGTERM, SIGINT or SIGHUP). Writes are atomic: a temporary file, flushed, then renamed over the old one.
+- **Format:** JSON with a `version` (now 1): the windows (with frames), their tabs and layout trees (pane IDs, exact sizes), focus and zoom, and the panes. A terminal also has a `session`, reserved for re-attaching hosted terminals later and unused for now.
+- **Only kmux's own file:** restoring runs terminal commands again, so kmux restores a file only if it is a regular file (not a link), owned by the user, readable and writable by no one else (mode 0600), in a folder no other user can write to. kmux never restores from a path a client gives it.
+- **Never in the way:** a file that fails these checks, isn't valid, or has another version is moved aside to `….json.bad`, and kmux starts with a new window. So does a file with no windows left.
+- **Starting fresh:** `--fresh` (on the app or the CLI, or `KMUX_FRESH=1`) opens a new window instead; the saved layout is replaced at the next save. `KMUX_NO_STATE=1` turns saving and restoring off (for tests on shared sockets).
+- **Tests:** `debug.saveState` replies with the state kmux would save, and `debug.restoreState` (with a `state`, or the last saved one) replaces everything with it, as a launch would. A bad state is refused with `bad_request` and changes nothing.
 
 ---
 
@@ -262,7 +292,7 @@ When a move leaves a tab or window empty, it closes ([3.1](#31-structure)).
 Each request is `{ id, cmd, args }`. Each reply is `{ id, ok: true, … }` or `{ id, ok: false, error: { code, message } }`.
 
 - A pane can be referred to by its ID (`p2`) or its name (`site`). Tabs (`t1`) and windows (`w1`) are referred to by ID.
-- IDs are never reused while kmux is running.
+- IDs are never reused while kmux is running. Panes, tabs and windows keep their IDs when the layout is restored ([3.6](#36-persistence)).
 - Wherever `window` appears, it can be a window ID or `new`. Leaving it out means the key window.
 
 ### 7.1 Commands
@@ -353,7 +383,7 @@ $ kmux instances
 | Instances | Several at once, one socket each ([3.4](#34-instances)). |
 | Events | **None for now.** Clients that need to notice changes poll `list`. Events would let a client react straight away (a server pane exited, a command sent with `send` finished, a page moved) and can be added later. |
 | Pane identity | No pane names on hover. Panes stay chromeless; `kmux list` shows names. |
-| Persistence | **Layouts come back after kmux restarts**: windows, tabs, splits and sizes, pane names, and what each pane shows. kmux owns its terminals, so they come back as **new** terminals, started again in their working directory with their command; their output and processes are gone. Web panes reload their URL and iOS panes relaunch their app. Keeping processes alive across app or machine restarts is kanna's job, not kmux's. Not built yet. |
+| Persistence | **Layouts come back after kmux restarts**: windows, tabs, splits and sizes, pane names, and what each pane shows. kmux owns its terminals, so they come back as **new** terminals, started again in their working directory with their command; their output and processes are gone. Web panes reload their URL and iOS panes relaunch their app. Keeping processes alive across app or machine restarts is kanna's job, not kmux's. **Status:** built. Saved per instance as `state-<instance>.json` beside its socket, half a second after each change and on quit, and only restored if kmux wrote it ([3.6](#36-persistence)). Panes keep their IDs. Not yet: a terminal's scrollback, web and md back/forward history, scroll positions. |
 | Web navigation | Back/forward history is **off by default** for web panes and turned on per pane with `history` (`--history` in the CLI). Markdown panes always keep it (it's only file paths, so cheap). There are no history shortcuts, because ⌘[ and ⌘] move between panes and ⌘← ⌘→ would be taken from terminals. |
 | Performance | Measured by the benchmark utility, `kmux-bench` ([8.3](#83-performance)). |
 | Background | kmux launches in front; `--bg` keeps it behind the user's windows, for tests ([3.5](#35-staying-in-the-background)). |
@@ -396,6 +426,7 @@ Web panes' memory isn't counted: WebKit runs each page in its own process.
 | **Layout tree** | The nested splits and panes in a tab. |
 | **Zoom** | Temporarily showing one pane over the whole tab. |
 | **Control protocol** | The JSON requests that other programs use to drive kmux. |
+| **State file** | Where an instance saves its layout to restore it when it starts again ([3.6](#36-persistence)). |
 | **Reference model** | The mockup in `reference/kmux/` that defines how kmux should look and behave. |
 | **Ghostty / GhosttyKit** | A fast terminal emulator, and the library build of it that kmux embeds. |
 | **Markdown** | A plain-text format for documents (headings, lists, links, tables), shown rendered in `md` panes. |

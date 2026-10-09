@@ -27,6 +27,10 @@ Run several kmux instances at once with `kmux --instance NAME …` (each has
 its own windows and socket); `kmux instances` lists them. Scripts and tests
 can start kmux with `--bg` (app or CLI, or `KMUX_BG=1`) to keep it behind your other windows.
 
+kmux saves each instance's layout and brings it back when it starts again
+(terminals start anew in their directory, with their command); `--fresh` opens
+a new window instead.
+
 `kmux open md docs/kmux-spec.md` shows a markdown file natively, with Mermaid
 diagrams drawn, and reloads it when it changes. ⌘= ⌘− ⌘0 or a pinch zoom it.
 
