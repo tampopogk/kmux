@@ -62,7 +62,7 @@ impl Mux {
             .stderr(std::process::Stdio::null())
             .spawn()
             .map_err(|e| format!("could not start {}: {e}", binary.display()))?;
-        let target = Target { instance: "bench".into(), socket: socket.clone(), background: true };
+        let target = Target { brand: kmux_client::Brand::KMUX, instance: "bench".into(), socket: socket.clone(), background: true };
         let deadline = Instant::now() + Duration::from_secs(10);
         let client = loop {
             if let Some(client) = Kmux::try_connect(&target) {

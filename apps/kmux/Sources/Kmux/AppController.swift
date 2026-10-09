@@ -16,8 +16,8 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var signalSources: [DispatchSourceSignal] = []
     private var paneMenu: NSMenu?
     private var testingDrag = false
-    /// Started with `--bg` (or `KMUX_BG=1`), e.g. by tests: don't take over the screen.
-    private let background = CommandLine.arguments.contains("--bg") || ProcessInfo.processInfo.environment["KMUX_BG"] == "1"
+    /// Started with `--bg` (or `KMUX_BG=1`, `KANNA_BG=1` in Kanna), e.g. by tests: don't take over the screen.
+    private let background = CommandLine.arguments.contains("--bg") || ProcessInfo.processInfo.environment[Brand.current.variable("BG")] == "1"
     private var controllers: [String: WindowController] = [:]
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -676,10 +676,10 @@ final class AppController: NSObject, NSApplicationDelegate {
             main.addItem(item)
             return submenu
         }
-        let app = menu("kmux", [("New Instance", #selector(newInstance), nil, nil)])
+        let app = menu(Brand.current.displayName, [("New Instance", #selector(newInstance), nil, nil)])
         if !instance.isDefault { app.insertItem(withTitle: "Instance: \(instance.name)", action: nil, keyEquivalent: "", at: 0) }
         app.addItem(.separator())
-        app.addItem(withTitle: "Quit kmux", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        app.addItem(withTitle: "Quit \(Brand.current.displayName)", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         paneMenu = menu("Pane", [
             ("Split Right", #selector(splitRight), "new_split:right", .cmd("d")),
             ("Split Down", #selector(splitDown), "new_split:down", .shiftCmd("d")),

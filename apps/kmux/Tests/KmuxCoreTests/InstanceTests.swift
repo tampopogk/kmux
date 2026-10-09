@@ -38,4 +38,10 @@ import Testing
         let reply = await core.handle(["id": 1, "cmd": "capabilities"])
         #expect(reply["instance"] == "work")
     }
+
+    @Test func brandsNameTheirVariables() {
+        #expect(Brand.current == .kmux)
+        #expect(Brand.kmux.variable("SOCKET") == "KMUX_SOCKET")
+        #expect(Brand(id: "kanna", displayName: "Kanna").variable("PANE") == "KANNA_PANE")
+    }
 }

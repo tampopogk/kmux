@@ -28,7 +28,7 @@ final class WindowController: NSObject, NSWindowDelegate {
         super.init()
         window.isReleasedWhenClosed = false
         window.tabbingMode = .disallowed
-        window.title = "kmux"
+        window.title = Brand.current.displayName
         window.delegate = self
         stage.wantsLayer = true
         stage.layer?.backgroundColor = NSColor.separatorColor.cgColor

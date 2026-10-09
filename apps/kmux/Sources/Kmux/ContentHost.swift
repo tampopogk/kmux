@@ -9,7 +9,7 @@ import KmuxMarkdown
 final class ContentHost: PaneHost {
     let runtime: GhosttyRuntime
     weak var core: Core?
-    /// Terminals get `KMUX_INSTANCE`, `KMUX_SOCKET` and `KMUX_PANE`, so
+    /// Terminals get `KMUX_INSTANCE`, `KMUX_SOCKET` and `KMUX_PANE` (`KANNA_…` in Kanna), so
     /// `kmux` run inside a pane talks to the kmux that owns it.
     var instance = Instance(name: Instance.defaultName)
     private(set) var views: [String: PaneView] = [:]
@@ -90,7 +90,8 @@ final class ContentHost: PaneHost {
             let terminal = TerminalSurfaceView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
             terminal.onFocus = { [weak self] in self?.onFocus?(id) }
             terminal.contextMenu = { [weak self] in self?.contextMenu?() }
-            let environment = [("KMUX_INSTANCE", instance.name), ("KMUX_SOCKET", instance.socketPath), ("KMUX_PANE", id)]
+            let brand = Brand.current
+            let environment = [(brand.variable("INSTANCE"), instance.name), (brand.variable("SOCKET"), instance.socketPath), (brand.variable("PANE"), id)]
             started = runtime.attach(terminal, command: pane.command, cwd: pane.cwd, environment: environment)
             content = terminal
         }
