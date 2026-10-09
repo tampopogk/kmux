@@ -39,6 +39,10 @@ final class AppController: NSObject, NSApplicationDelegate {
         host.onFocus = { [weak self] id in self?.focused(id) }
         host.onNavigate = { [weak self] id, url in self?.request(["cmd": "navigate", "args": ["pane": .string(id), "url": .string(url)]]) }
         host.onOpenMarkdown = { [weak self] id, path in self?.request(["cmd": "navigate", "args": ["pane": .string(id), "path": .string(path)]]) }
+        host.onMarkdownHistory = { [weak self] id, back in
+            guard let history = self?.core.model.panes[id]?.history, !(back ? history.back : history.forward).isEmpty else { return }
+            self?.request(["cmd": "navigate", "args": ["pane": .string(id), back ? "back" : "forward": true]])
+        }
         host.onPaneDrag = { [weak self] id, _ in self?.dragPane(id) }
         host.contextMenu = { [weak self] in self?.paneMenu?.copy() as? NSMenu }
         host.onCloseRequest = { [weak self] id in self?.request(["cmd": "close", "args": ["pane": .string(id)]]) }
@@ -730,7 +734,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         return ["characters": .string(event.characters ?? ""), "charactersIgnoringModifiers": .string(event.charactersIgnoringModifiers ?? "")]
     }
 
-    /// `debug.click`: clicks a tab (`tab`, `clicks`), or a pane (`pane`, `at`), with mouse events sent
+    /// `debug.click`: clicks a tab (`tab`, `clicks`), or a pane (`pane`, `at`, `button`), with mouse events sent
     /// through AppKit's normal event path.
     private func click(_ args: JSON) throws -> [String: JSON] {
         let window: NSWindow, point: NSPoint
@@ -748,6 +752,16 @@ final class AppController: NSObject, NSApplicationDelegate {
                   let center = controller.tabBar.center(of: id) else { throw KmuxError("not_found", "no tab \"\(id)\" on screen") }
             window = controller.window
             point = center
+        }
+        // `button`: 3 or 4 is the mouse's back or forward button, sent through the window.
+        if let button = args["button"]?.number {
+            guard let cg = NSEvent.mouseEvent(with: .otherMouseDown, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                              windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)?.cgEvent
+            else { throw KmuxError("bad_request", "can't make that mouse event") }
+            cg.setIntegerValueField(.mouseEventButtonNumber, value: Int64(button))
+            guard let down = NSEvent(cgEvent: cg) else { throw KmuxError("bad_request", "can't make that mouse event") }
+            window.sendEvent(down)
+            return [:]
         }
         for count in 1...max(1, Int(args["clicks"]?.number ?? 1)) {
             func event(_ type: NSEvent.EventType) -> NSEvent? {

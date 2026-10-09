@@ -235,10 +235,10 @@ pub static COMMANDS: &[Command] = &[
         summary: "Point a web pane at a new URL (or go back or forward), or a markdown pane at another file.",
         usage: "kmux navigate PANE URL\n       kmux navigate PANE --back|--forward\n       kmux navigate PANE FILE.md",
         options: &[
-            ("--back", "Go back a page. Only for panes opened with `open web URL --history`."),
+            ("--back", "Go back a page: in a markdown pane, or a web pane opened with `open web URL --history`."),
             ("--forward", "Go forward a page (after --back)."),
         ],
-        notes: "Web panes keep no history unless opened with --history.",
+        notes: "Markdown panes always keep history of the files they showed. Web panes keep none unless opened with --history.",
         examples: &[
             ("kmux navigate site localhost:5173", "Show localhost:5173 in the site pane."),
             ("kmux navigate site --back", "Go back to the previous page (the pane was opened with --history)."),

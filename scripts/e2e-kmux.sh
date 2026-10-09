@@ -216,7 +216,7 @@ dg="$(raw '{"id":1,"cmd":"debug.diagram","args":{"source":"flowchart LR\n  A[KMU
 [[ "$(raw '{"id":1,"cmd":"debug.diagram","args":{"source":"flowchart LR\n  A -->"}}')" == *"Diagram error"* ]] || fail "invalid diagrams should say so"
 
 # 8c. Markdown panes: rendered natively (no web view), diagrams drawn,
-# live reload, navigate, magnification (keys and a smooth pinch, never
+# live reload, navigate, back/forward, magnification (keys and a smooth pinch, never
 # re-wrapping the text, focused or not), clicks beside the page, a missing file.
 mkdir -p "$out/docs"
 cat > "$out/docs/spec.md" <<'MD'
@@ -288,6 +288,29 @@ raw '{"id":1,"cmd":"focus","args":{"pane":"mdterm"}}' >/dev/null; sleep 0.3
 raw '{"id":1,"cmd":"debug.click","args":{"pane":"doc","at":[4,200]}}' >/dev/null; sleep 0.3
 [[ "$(mdfocused)" == doc ]] || fail "clicking beside a magnified-out page should focus its pane: $(mdfocused)"
 key "cmd+0"
+# Back and forward (the CLI, and the mouse's buttons 4 and 5) return to where
+# each file was being read: its scroll and magnification.
+{ echo "# LONG PAGE"; for i in $(seq 300); do echo; echo "Line $i of a long page."; done; } > "$out/docs/long.md"
+"$cli" navigate doc "$out/docs/long.md" >/dev/null
+raw '{"id":1,"cmd":"focus","args":{"pane":"doc"}}' >/dev/null; sleep 0.3
+key "cmd+="
+raw '{"id":1,"cmd":"debug.md","args":{"pane":"doc","scroll":900}}' >/dev/null
+read_at="$(field scroll <<<"$(md)")"
+"$cli" navigate doc --back >/dev/null
+[[ "$(mdtext)" == *"OTHER PAGE"* && "$(mdzoom)" == 1 ]] || fail "--back should return to the other page at its own size: $(mdzoom) $(mdtext)"
+mouse() { raw "{\"id\":1,\"cmd\":\"debug.click\",\"args\":{\"pane\":\"doc\",\"button\":$1}}" >/dev/null; sleep 0.3; }
+mouse 4
+[[ "$(mdtext)" == *"LONG PAGE"* ]] || fail "mouse button 5 should go forward: $(mdtext)"
+back_at="$(field scroll <<<"$(md)")"
+[[ "$(mdzoom)" == 1.1 ]] && python3 -c 'import sys; sys.exit(abs(float(sys.argv[1]) - float(sys.argv[2])) > 1)' "$read_at" "$back_at" \
+  || fail "forward should return to where the page was read ($read_at at 1.1): $back_at at $(mdzoom)"
+mouse 3
+[[ "$(mdtext)" == *"OTHER PAGE"* ]] || fail "mouse button 4 should go back: $(mdtext)"
+"$cli" navigate doc --back >/dev/null
+[[ "$(mdtext)" == *"KMUX MD OK"* ]] || fail "--back should reach the first file: $(mdtext)"
+"$cli" navigate doc --back >/dev/null 2>&1 && fail "--back with nothing behind should fail"
+mouse 3
+[[ "$(mdtext)" == *"KMUX MD OK"* ]] || fail "mouse back with nothing behind should do nothing: $(mdtext)"
 missing="$("$cli" open md "$out/docs/nope.md" --window "$mdw" 2>&1)" && fail "a missing file should fail"
 [[ "$missing" == *"No such file"* ]] || fail "a missing file should say so: $missing"
 folder="$("$cli" open md "$out/docs" --window "$mdw" 2>&1)" && fail "a folder should fail"

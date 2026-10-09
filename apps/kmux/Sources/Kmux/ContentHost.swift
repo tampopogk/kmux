@@ -18,6 +18,11 @@ final class ContentHost: PaneHost {
     var onNavigate: ((String, String) -> Void)?
     /// A markdown pane followed a link to another markdown file.
     var onOpenMarkdown: ((String, String) -> Void)?
+    /// A markdown pane's mouse back (true) or forward (false) button.
+    var onMarkdownHistory: ((String, Bool) -> Void)?
+    /// Where each file was left in each markdown pane (scroll, magnification),
+    /// so going back returns to it.
+    private var markdownSpots: [String: [String: (y: CGFloat, zoom: CGFloat)]] = [:]
     /// Markdown panes' zoom, kept when a pane moves to another file or restarts.
     private var markdownZoom: [String: CGFloat] = [:]
     /// The pane's ⋯ grip was pressed: a drag to move the pane begins.
@@ -59,7 +64,10 @@ final class ContentHost: PaneHost {
                 started = false
                 failure = directory.boolValue ? "\(path) is a folder, not a markdown file" : "No such file: \(path)"
             } else {
-                let markdown = MarkdownPaneView(path: path, zoom: markdownZoom[id] ?? 1)
+                let spot = markdownSpots[id]?[path]
+                let markdown = MarkdownPaneView(path: path, zoom: spot?.zoom ?? markdownZoom[id] ?? 1)
+                markdown.startScrollY = spot?.y
+                markdown.onHistory = { [weak self] back in self?.onMarkdownHistory?(id, back) }
                 markdown.onFocus = { [weak self] in self?.onFocus?(id) }
                 markdown.onOpenMarkdown = { [weak self] target in self?.onOpenMarkdown?(id, target) }
                 markdown.contextMenu = { [weak self] in self?.contextMenu?() }
@@ -137,6 +145,7 @@ final class ContentHost: PaneHost {
         if let markdown = view.content as? MarkdownPaneView {
             markdown.stop()
             markdownZoom[pane.id] = markdown.zoom
+            markdownSpots[pane.id, default: [:]][markdown.path] = (markdown.scrollTop, markdown.zoom)
         }
         view.removeFromSuperview()
     }

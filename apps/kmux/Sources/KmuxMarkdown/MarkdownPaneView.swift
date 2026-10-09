@@ -13,6 +13,10 @@ public final class MarkdownPaneView: NSView, NSTextViewDelegate {
     public var onFocus: (() -> Void)? { didSet { textView.onFocus = onFocus } }
     /// A link to another markdown file (absolute path): show it in this pane.
     public var onOpenMarkdown: ((String) -> Void)?
+    /// The mouse's back (true) or forward (false) button over the pane.
+    public var onHistory: ((Bool) -> Void)?
+    /// Where to scroll once the pane is first laid out (returning to a file).
+    public var startScrollY: CGFloat?
     /// kmux's pane menu, added below the text view's own items on a right-click.
     public var contextMenu: (() -> NSMenu?)? { didSet { textView.contextMenu = contextMenu } }
     public let path: String
@@ -90,6 +94,20 @@ public final class MarkdownPaneView: NSView, NSTextViewDelegate {
         super.layout()
         scrollView.frame = bounds
         updateInset()
+        if let y = startScrollY, bounds.height > 0 {
+            startScrollY = nil
+            scroll(toY: y)
+        }
+    }
+
+    /// Mouse buttons 4 and 5 (back, forward), from the text, or from the
+    /// space around a page zoomed out.
+    public override func otherMouseDown(with event: NSEvent) {
+        switch event.buttonNumber {
+        case 3: onHistory?(true)
+        case 4: onHistory?(false)
+        default: super.otherMouseDown(with: event)
+        }
     }
 
     /// Wide panes centre the text at its maximum width. The text is laid out
