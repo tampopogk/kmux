@@ -602,9 +602,16 @@ func v12Font(_ r: R, _ make: (CGFloat) -> CTFont, tracking: CGFloat, scale: CGFl
     let target = xh(roundedHeavy(base)) * scale
     var size = base * target / xh(make(base))
     if measured {
-        let km = words([[("k", rgb(0)), ("m", rgb(0))]], make(size), tracking: tracking, lead: 0, centreY: 512, r)
-        let w = km[0].path.boundingBoxOfPath.union(km[1].path.boundingBoxOfPath).width
-        if w > 640 { size *= 640 / w }
+        // Matching x-height alone leaves narrow fonts looking small and wide ones big: meet
+        // halfway (geometric mean) between the x-height match and a match of "km"'s width.
+        func kmWidth(_ f: CTFont, _ t: CGFloat) -> CGFloat {
+            let km = words([[("k", rgb(0)), ("m", rgb(0))]], f, tracking: t, lead: 0, centreY: 512, r)
+            return km[0].path.boundingBoxOfPath.union(km[1].path.boundingBoxOfPath).width
+        }
+        let w = kmWidth(make(size), tracking), want = kmWidth(roundedHeavy(base), 10)
+        if w > 0 { size *= (want / w).squareRoot() }
+        let w2 = kmWidth(make(size), tracking)
+        if w2 > 640 { size *= 640 / w2 }
     }
     let f = make(size)
     let c = rgb(0)
@@ -692,10 +699,24 @@ func makeSheet2(_ names: [String], _ url: URL) {
     makeSheet2(names.compactMap { n in variants.first { $0.name == n } }, url)
 }
 
-func makeSheet2(_ vs: [Variant], _ url: URL) {
+/// Sheet columns: pixel size, and the largest size drawn as quadrants for that column
+/// (so 32 can be shown both lettered and as quadrants).
+typealias SheetColumn = (size: Int, quadMax: Int)
+let defaultColumns: [SheetColumn] = [(512, 16), (64, 16), (32, 16), (32, 32), (16, 16)]
+
+/// Parses "512,128,64,32,32q,16q" (q = drawn as quadrants).
+func parseColumns(_ s: String) -> [SheetColumn] {
+    s.split(separator: ",").compactMap { t in
+        let q = t.hasSuffix("q"), n = Int(q ? t.dropLast() : t[...]) ?? 0
+        return n > 0 ? (n, q ? n : min(16, n - 1)) : nil
+    }
+}
+
+func makeSheet2(_ vs: [Variant], _ url: URL, columns: [SheetColumn] = defaultColumns) {
     let pad: CGFloat = 32, labelH: CGFloat = 56
-    let half = pad + 512 + pad + 64 + pad + 32 + pad + 32 + pad + 16 + pad
-    let rowH = labelH + 512 + 2 * pad
+    let big = CGFloat(columns.map(\.size).max() ?? 512)
+    let half = pad + columns.reduce(0) { $0 + CGFloat($1.size) + pad }
+    let rowH = labelH + big + 2 * pad
     let width = 2 * half, height = rowH * CGFloat(vs.count)
     let ctx = CGContext(data: nil, width: Int(width), height: Int(height), bitsPerComponent: 8, bytesPerRow: 0,
                         space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
@@ -706,16 +727,22 @@ func makeSheet2(_ vs: [Variant], _ url: URL) {
             let x0 = CGFloat(j) * half
             ctx.setFillColor(bg.0); ctx.fill(CGRect(x: x0, y: y0, width: half, height: rowH))
             var x = x0 + pad
-            for (s, q) in [(512, 16), (64, 16), (32, 16), (32, 32), (16, 16)] {
+            for (s, q) in columns {
                 quadMax = q
-                let yy = y0 + pad + (s == 512 ? 0 : 256 - CGFloat(s) / 2)
+                let yy = y0 + pad + (big - CGFloat(s)) / 2
                 ctx.draw(render(v, size: s), in: CGRect(x: x, y: yy, width: CGFloat(s), height: CGFloat(s)))
                 x += CGFloat(s) + pad
             }
             if j == 0 {
                 drawText("\(v.name)  \(v.note)", font(28, weight: .semibold), bg.1, at: CGPoint(x: x0 + pad, y: y0 + rowH - labelH + 8), in: ctx)
             } else {
-                drawText("64   32   32q  16q", font(18, weight: .medium), bg.1, at: CGPoint(x: x0 + pad + 512 + pad, y: y0 + 256 + 60), in: ctx)
+                var lx = x0 + pad
+                for (s, q) in columns {   // size labels on the header line, centred over each column
+                    let t = "\(s)" + (q >= s ? "q" : "")
+                    drawText(t, font(20, weight: .medium), bg.1, at: CGPoint(x: lx + CGFloat(s) / 2 - CGFloat(t.count) * 6,
+                                                                            y: y0 + rowH - labelH + 8), in: ctx)
+                    lx += CGFloat(s) + pad
+                }
             }
         }
         ctx.setFillColor(rgb(0x888888)); ctx.fill(CGRect(x: 0, y: y0, width: width, height: 2))
@@ -1162,7 +1189,7 @@ if let preview = option("--preview") {
     let want = (option("--only") ?? "").split(separator: ",").map(String.init)
     let list = readFontList(option("--font-list") ?? "fonts.tsv")
     let vs = want.compactMap { w in list.first { $0.label == w }.flatMap { v12FileVariant($0).0 } }
-    makeSheet2(vs, URL(fileURLWithPath: out))
+    makeSheet2(vs, URL(fileURLWithPath: out), columns: option("--sizes").map(parseColumns) ?? defaultColumns)
 } else if let file = option("--font-file") {
     // --font-file PATH [--out DIR]: kmux.icns of v12 in that font (registered for this process only).
     let (v, why) = v12FileVariant(FontEntry(label: "v12-file", path: file, note: ""))
