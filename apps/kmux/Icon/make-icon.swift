@@ -1,8 +1,13 @@
 #!/usr/bin/env swift
-// Draws the kmux app icon ("km|ux" in the Kanna palette) with Core Graphics
-// and Core Text, so the icon has no binary-only source.
+// Draws the kmux app icon with Core Graphics and Core Text, so the icon has no binary-only source.
 //
-//   swift apps/kmux/Icon/make-icon.swift                     # default variant -> apps/kmux/Icon/kmux.icns
+// The icon (default, "kmux"): "km" over "ux" on Kanna.app's near-white tile, each letter in one
+// of Kanna's icon gradients, the green cursor pill as the bar, letters in Fira Mono Bold
+// (bundled: apps/kmux/Icon/fonts/FiraMono-Bold.ttf, SIL OFL 1.1, so no download is needed).
+// At 16 px it becomes four gradient quadrants. Everything else here is the exploration that
+// led to it, kept selectable with --variant / --font-file.
+//
+//   swift apps/kmux/Icon/make-icon.swift                     # the icon -> apps/kmux/Icon/kmux.icns
 //   swift apps/kmux/Icon/make-icon.swift --variant light-row # another variant
 //   swift apps/kmux/Icon/make-icon.swift --preview sheet.png # preview sheet of every variant
 //   swift apps/kmux/Icon/make-icon.swift --out DIR           # where kmux.icns (and the .iconset) go
@@ -12,8 +17,7 @@
 //   swift apps/kmux/Icon/make-icon.swift --family out.png --kanna kanna.png [--only v11,v13]  # beside Kanna.app's icon
 //   --quad N: draw v11-v16 as four quadrants up to N px (default 16)
 //
-// Variants: dark-stack (default: the only one whose letters survive at 16 and 32 px),
-// dark-row, light-row ("km|ux" in one line; reads best large, smears below 32 px).
+// Older variants: dark-stack (the first icon), dark-row, light-row ("km|ux" in one line; reads best large, smears below 32 px).
 // v01-v10, v11-v16 (Kanna.app's icon palette): explorations for choosing a new icon (see "Explorations" below); selectable with --variant.
 //
 // Palette: Kanna's UI tokens (kanna-v3 apps/kanna3-mac/Sources/Kanna3Mac/Theme.swift).
@@ -1091,6 +1095,38 @@ func makeFontSheets(_ entries: [(String, Variant?, String)], prefix: String, per
     }
 }
 
+// MARK: The icon
+
+/// The kmux icon: v12 in the bundled Fira Mono Bold.
+func iconVariant() -> Variant {
+    let path = scriptDir.appendingPathComponent("fonts/FiraMono-Bold.ttf").path
+    let (v, why) = v12FileVariant(FontEntry(label: "kmux", path: path, note: ""))
+    guard let v else { fatalError("\(path): \(why)") }
+    return v
+}
+
+/// Final check: the icon at 1024, 128, 64, 32 and 16 px on a light and a dark backdrop.
+func makeFinalPreview(_ url: URL) {
+    let v = iconVariant(), sizes = [1024, 128, 64, 32, 16], pad: CGFloat = 48
+    let half = pad + sizes.reduce(0) { $0 + CGFloat($1) + pad }
+    let height = 1024 + 2 * pad + 40
+    let ctx = CGContext(data: nil, width: Int(2 * half), height: Int(height), bitsPerComponent: 8, bytesPerRow: 0,
+                        space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+    ctx.interpolationQuality = .none
+    for (j, bg) in [(rgb(0xececec), rgb(0x1d2026)), (rgb(0x2b2e33), rgb(0xe6e8eb))].enumerated() {
+        let x0 = CGFloat(j) * half
+        ctx.setFillColor(bg.0); ctx.fill(CGRect(x: x0, y: 0, width: half, height: height))
+        var x = x0 + pad
+        for s in sizes {
+            ctx.draw(render(v, size: s), in: CGRect(x: x, y: pad + (1024 - CGFloat(s)) / 2, width: CGFloat(s), height: CGFloat(s)))
+            drawText("\(s)", font(20, weight: .medium), bg.1, at: CGPoint(x: x + CGFloat(s) / 2 - 14, y: height - 34), in: ctx)
+            x += CGFloat(s) + pad
+        }
+    }
+    writePNG(ctx.makeImage()!, url)
+    print("Wrote \(url.path)")
+}
+
 // MARK: Output
 
 func writePNG(_ img: CGImage, _ url: URL) {
@@ -1195,13 +1231,15 @@ if let preview = option("--preview") {
     let (v, why) = v12FileVariant(FontEntry(label: "v12-file", path: file, note: ""))
     guard let v else { fatalError(why) }
     makeIcns(v, outDir: option("--out").map { URL(fileURLWithPath: $0) } ?? scriptDir)
+} else if let out = option("--final-preview") {
+    makeFinalPreview(URL(fileURLWithPath: out))
 } else if let zoom = option("--zoom") {
     let names = option("--only")?.split(separator: ",").map(String.init) ?? explorations.map(\.name)
     makeZoom(names, URL(fileURLWithPath: zoom))
 } else {
-    let name = option("--variant") ?? "dark-stack"
-    guard let v = variants.first(where: { $0.name == name }) else {
-        fatalError("unknown variant \(name); one of \(variants.map(\.name))")
+    let name = option("--variant") ?? "kmux"
+    guard let v = name == "kmux" ? iconVariant() : variants.first(where: { $0.name == name }) else {
+        fatalError("unknown variant \(name); one of \(["kmux"] + variants.map(\.name))")
     }
     makeIcns(v, outDir: option("--out").map { URL(fileURLWithPath: $0) } ?? scriptDir)
 }
