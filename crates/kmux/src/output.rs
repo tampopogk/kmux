@@ -56,6 +56,12 @@ fn what(pane: &Value) -> Option<String> {
             None => app.into(),
         });
     }
+    if let Some(path) = pane["path"].as_str() {
+        return Some(match std::env::var("HOME") {
+            Ok(home) if !home.is_empty() && path.starts_with(&format!("{home}/")) => format!("~{}", &path[home.len()..]),
+            _ => path.into(),
+        });
+    }
     pane["cmd"].as_str().or(pane["url"].as_str()).map(String::from)
 }
 
