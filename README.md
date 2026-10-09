@@ -20,6 +20,7 @@ cargo build --release            # target/release/kmux
 scripts/test-kmux-protocol.sh    # shared cases: model and app
 scripts/e2e-kmux.sh              # end to end: app + CLI + pixels (KMUX_E2E_IOS=0 skips the simulator)
 target/release/kmux-bench        # performance: pane start, typing latency, memory (targets in bench/)
+scripts/package-kmux.sh          # target/dist/kmux-*-unsigned.dmg: app + CLI, UNSIGNED, local testing only
 ```
 
 Run several kmux instances at once with `kmux --instance NAME …` (each has
