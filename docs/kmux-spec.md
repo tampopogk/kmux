@@ -141,7 +141,7 @@ kmux launches in front by default. With `--bg` (on the app or the CLI, or `KMUX_
 ### 4.1 No chrome
 
 - Panes have no header, title or border.
-- While the pointer is over a pane, a **⋯** drag handle appears at the top centre, as in Ghostty. There is no close button: close a pane with ⌘W, the Pane menu, or by right-clicking it.
+- Each pane has a **⋯** drag handle at the top centre. It stays invisible until the pointer is over the handle itself (the open-hand cursor shows where it is), so the pane's top edge stays clear. There is no close button: close a pane with ⌘W, the Pane menu, or by right-clicking it.
 - The focused pane has a thin accent outline, shown only in the key window and only when the tab has more than one pane.
 - Errors and exits are shown inside the pane itself (see below).
 
@@ -356,7 +356,7 @@ $ kmux instances
 | Performance | Measured by the benchmark utility, `kmux-bench` ([8.3](#83-performance)). |
 | Background | kmux launches in front; `--bg` keeps it behind the user's windows, for tests ([3.5](#35-staying-in-the-background)). |
 | Tab titles | Plain names (`Tab 1`, …) that users rename by double-clicking and clients rename with `rename-tab`. Listing pane names didn't scale. |
-| Pane dragging | From a ⋯ handle shown on hover at the top of the pane, as in Ghostty, instead of ⌘-drag. |
+| Pane dragging | From a ⋯ handle at the top of the pane, shown only while the pointer is over the handle, instead of ⌘-drag. |
 | Model and app in sync | The protocol cases in `tests/kmux-protocol/` run against both the reference model and the native core. |
 | Multiple windows | Required. Modelled in [3.1](#31-structure), [section 6](#6-moving-windows-tabs-and-panes) and [section 7](#7-control-protocol). |
 

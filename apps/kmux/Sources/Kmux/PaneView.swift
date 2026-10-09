@@ -2,7 +2,7 @@ import AppKit
 import KmuxCore
 
 /// A pane on screen: its content, with no chrome except a focus outline, a
-/// notice once it exits or fails, and the ⋯ grip while the mouse is over it.
+/// notice once it exits or fails, and the ⋯ grip (seen only while the mouse is over the grip).
 @MainActor
 final class PaneView: NSView {
     let id: String
@@ -32,25 +32,8 @@ final class PaneView: NSView {
         outline.isHidden = true
         addSubview(outline)
 
-        grip.isHidden = true
         addSubview(grip)
     }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        trackingAreas.forEach(removeTrackingArea)
-        // A tracking area made while the mouse is already inside never reports
-        // the exit unless told so, and the grip would stay up (e.g. on the pane
-        // just clicked, whose layout was rebuilt).
-        let inside = window.map { bounds.contains(convert($0.mouseLocationOutsideOfEventStream, from: nil)) } ?? false
-        var options: NSTrackingArea.Options = [.mouseEnteredAndExited, .activeAlways, .inVisibleRect]
-        if inside { options.insert(.assumeInside) }
-        addTrackingArea(NSTrackingArea(rect: bounds, options: options, owner: self))
-        grip.isHidden = !inside
-    }
-
-    override func mouseEntered(with event: NSEvent) { grip.isHidden = false }
-    override func mouseExited(with event: NSEvent) { grip.isHidden = true }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 

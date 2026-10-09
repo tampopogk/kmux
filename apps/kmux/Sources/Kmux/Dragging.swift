@@ -155,6 +155,7 @@ final class DividerView: NSView {
 final class PaneGrip: NSView {
     static let size = NSSize(width: 34, height: 14)
     var onDrag: ((NSEvent) -> Void)?
+    /// The grip is drawn only while the mouse is over it (or dragging it).
     private var hovered = false { didSet { needsDisplay = true } }
 
     override init(frame frameRect: NSRect) {
@@ -167,7 +168,14 @@ final class PaneGrip: NSView {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         trackingAreas.forEach(removeTrackingArea)
-        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
+        // A tracking area made while the mouse is already inside never reports
+        // the exit unless told so, and the grip would stay up (e.g. after the
+        // pane's layout was rebuilt under the mouse).
+        let inside = window.map { bounds.contains(convert($0.mouseLocationOutsideOfEventStream, from: nil)) } ?? false
+        var options: NSTrackingArea.Options = [.mouseEnteredAndExited, .activeAlways, .inVisibleRect]
+        if inside { options.insert(.assumeInside) }
+        addTrackingArea(NSTrackingArea(rect: bounds, options: options, owner: self))
+        hovered = inside
     }
 
     override func mouseEntered(with event: NSEvent) { hovered = true }
@@ -182,8 +190,9 @@ final class PaneGrip: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        guard hovered else { return }
         let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0, dy: -6).offsetBy(dx: 0, dy: 6), xRadius: 6, yRadius: 6)
-        (hovered ? NSColor.controlAccentColor : NSColor.black.withAlphaComponent(0.55)).setFill()
+        NSColor.controlAccentColor.setFill()
         shape.fill()
         NSColor.white.setFill()
         for i in -1...1 {
