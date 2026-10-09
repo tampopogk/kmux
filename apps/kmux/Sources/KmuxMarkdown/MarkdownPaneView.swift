@@ -13,7 +13,8 @@ public final class MarkdownPaneView: NSView, NSTextViewDelegate {
     public var onFocus: (() -> Void)? { didSet { textView.onFocus = onFocus } }
     /// A link to another markdown file (absolute path): show it in this pane.
     public var onOpenMarkdown: ((String) -> Void)?
-    /// The mouse's back (true) or forward (false) button over the pane.
+    /// Back (true) or forward (false): the mouse's buttons 4 and 5, or a
+    /// two-finger swipe sideways.
     public var onHistory: ((Bool) -> Void)?
     /// Where to scroll once the pane is first laid out (returning to a file).
     public var startScrollY: CGFloat?
@@ -28,7 +29,7 @@ public final class MarkdownPaneView: NSView, NSTextViewDelegate {
     public private(set) var renderMs: Double = 0
     public private(set) var parseMs: Double = 0
 
-    private let scrollView = NSScrollView()
+    private let scrollView = MarkdownScrollView()
     private let textView: MarkdownTextView
     private let layoutManager = MarkdownLayoutManager()
     private let diagrams = DiagramCache()
@@ -58,6 +59,7 @@ public final class MarkdownPaneView: NSView, NSTextViewDelegate {
         scrollView.backgroundColor = MarkdownTheme.background
         addSubview(scrollView)
         textView.delegate = self
+        scrollView.onSwipe = { [weak self] back in self?.onHistory?(back) }
         load()
         poll = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.reloadIfChanged() }
@@ -304,6 +306,33 @@ public final class MarkdownPaneView: NSView, NSTextViewDelegate {
 
     /// Scrolls so `y` (points from the top of the document) is at the top.
     public func scroll(toY y: CGFloat) { textView.scroll(NSPoint(x: 0, y: max(0, y))) }
+}
+
+/// The scroll view: a two-finger swipe sideways goes back (fingers moving
+/// right) or forward, as in Safari, but only once the page can't scroll any
+/// further that way, so a magnified page still pans with two fingers.
+final class MarkdownScrollView: NSScrollView {
+    var onSwipe: ((Bool) -> Void)?
+
+    /// Whether a sideways swipe should navigate rather than scroll: the
+    /// visible part of the page is already at that edge.
+    static func swipes(back: Bool, visible: NSRect, page: NSRect) -> Bool {
+        back ? visible.minX <= page.minX + 1 : visible.maxX >= page.maxX - 1
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        guard event.phase == .began, NSEvent.isSwipeTrackingFromScrollEventsEnabled, onSwipe != nil,
+              abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY), let page = documentView?.frame else {
+            return super.scrollWheel(with: event)
+        }
+        // With natural scrolling the content follows the fingers; otherwise it's reversed.
+        let back = (event.isDirectionInvertedFromDevice ? event.scrollingDeltaX : -event.scrollingDeltaX) > 0
+        guard Self.swipes(back: back, visible: contentView.bounds, page: page) else { return super.scrollWheel(with: event) }
+        event.trackSwipeEvent(options: [.lockDirection, .clampGestureAmount], dampenAmountThresholdMin: -1, max: 1) { [weak self] _, phase, _, _ in
+            guard phase == .ended else { return }
+            MainActor.assumeIsolated { self?.onSwipe?(back) }
+        }
+    }
 }
 
 /// The scroll view's clip view: centres the page when it is magnified to less
