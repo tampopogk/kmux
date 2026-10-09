@@ -680,6 +680,26 @@ final class AppController: NSObject, NSApplicationDelegate {
         if !instance.isDefault { app.insertItem(withTitle: "Instance: \(instance.name)", action: nil, keyEquivalent: "", at: 0) }
         app.addItem(.separator())
         app.addItem(withTitle: "Quit \(Brand.current.displayName)", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        // Sent to whatever has focus: a terminal (Ghostty's copy and paste), a
+        // web page or its URL field, or a markdown pane's text.
+        let edit = NSMenu(title: "Edit")
+        let editItems: [(String, String, String?, Shortcut)?] = [
+            ("Undo", "undo:", nil, .cmd("z")), ("Redo", "redo:", nil, .shiftCmd("z")), nil,
+            ("Cut", "cut:", nil, .cmd("x")), ("Copy", "copy:", "copy_to_clipboard", .cmd("c")),
+            ("Paste", "paste:", "paste_from_clipboard", .cmd("v")), ("Select All", "selectAll:", "select_all", .cmd("a")),
+        ]
+        for entry in editItems {
+            guard let (label, action, ghostty, fallback) = entry else {
+                edit.addItem(.separator())
+                continue
+            }
+            let shortcut = ghostty.flatMap { runtime.shortcut(for: $0) } ?? fallback
+            let item = edit.addItem(withTitle: label, action: Selector(action), keyEquivalent: shortcut.key)
+            item.keyEquivalentModifierMask = shortcut.modifiers
+        }
+        let editItem = NSMenuItem()
+        editItem.submenu = edit
+        main.addItem(editItem)
         paneMenu = menu("Pane", [
             ("Split Right", #selector(splitRight), "new_split:right", .cmd("d")),
             ("Split Down", #selector(splitDown), "new_split:down", .shiftCmd("d")),

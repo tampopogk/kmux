@@ -89,6 +89,24 @@ final class TerminalSurfaceView: NSView, @preconcurrency NSTextInputClient {
         return result
     }
 
+    // MARK: Edit menu
+
+    // As in Ghostty's app: the Edit menu's items run Ghostty's actions, so a
+    // terminal copies and pastes as its config says (e.g. bracketed paste).
+    @objc func copy(_ sender: Any?) { perform("copy_to_clipboard") }
+    @objc func paste(_ sender: Any?) { perform("paste_from_clipboard") }
+    @objc override func selectAll(_ sender: Any?) { perform("select_all") }
+
+    private func perform(_ action: String) {
+        guard let surface else { return }
+        _ = ghostty_surface_binding_action(surface, action, UInt(action.utf8.count))
+    }
+
+    @objc func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        guard let surface else { return false }
+        return item.action == #selector(copy(_:)) ? ghostty_surface_has_selection(surface) : true
+    }
+
     // MARK: Keyboard
 
     override func keyDown(with event: NSEvent) {

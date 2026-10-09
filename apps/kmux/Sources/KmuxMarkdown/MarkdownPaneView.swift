@@ -362,8 +362,6 @@ public final class MarkdownTextView: NSTextView {
     /// visible width, and AppKit would narrow the text view to match and
     /// re-wrap the text; the width stays this instead.
     var layoutWidth: CGFloat = 0
-    /// Where ⌘C copies to (tests use a private one).
-    var pasteboard = NSPasteboard.general
 
     public override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(NSSize(width: layoutWidth > 0 ? layoutWidth : newSize.width, height: newSize.height))
@@ -373,23 +371,6 @@ public final class MarkdownTextView: NSTextView {
         let result = super.becomeFirstResponder()
         if result { onFocus?() }
         return result
-    }
-
-    /// kmux has no Edit menu (terminals take ⌘C and ⌘V themselves), so the
-    /// text view answers ⌘C and ⌘A here.
-    public override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.capsLock, .numericPad, .function])
-        guard window?.firstResponder === self, modifiers == .command else { return super.performKeyEquivalent(with: event) }
-        switch event.charactersIgnoringModifiers {
-        case "c":
-            if selectedRange().length > 0 { writeSelection(to: pasteboard, types: writablePasteboardTypes) }
-            return true
-        case "a":
-            selectAll(nil)
-            return true
-        default:
-            return super.performKeyEquivalent(with: event)
-        }
     }
 
     public override func menu(for event: NSEvent) -> NSMenu? {

@@ -152,7 +152,7 @@ key "cmd+shift+w"
 # Menus: every action in the spec's table (§5) has a menu item.
 menus="$(raw '{"id":1,"cmd":"debug.menu"}')"
 for item in "Split Right" "Split Down" "Open URL…" "Zoom" "Move Pane to New Window" "Restart" "Close Pane" "New Tab" \
-            "New Window" "Close Window" "Move Tab to New Window" "Next Window" "New Instance"; do
+            "New Window" "Close Window" "Move Tab to New Window" "Next Window" "New Instance" "Copy" "Paste" "Select All"; do
   [[ "$menus" == *"\"item\": \"$item\""* || "$menus" == *"\"item\":\"$item\""* ]] || fail "no menu item \"$item\""
 done
 

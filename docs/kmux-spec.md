@@ -184,10 +184,12 @@ stateDiagram-v2
 
 ## 5. Menus and Shortcuts
 
-The menu bar has **Pane**, **View** and **Window** menus. Right-clicking a pane opens the Pane menu for that pane: a terminal shows it unless the program running in it uses the mouse, and a web pane adds it below the browser's own items. Right-clicking a tab offers **Move tab to new window** and **Close tab**.
+The menu bar has **Edit**, **Pane**, **View** and **Window** menus. Right-clicking a pane opens the Pane menu for that pane: a terminal shows it unless the program running in it uses the mouse, and a web pane adds it below the browser's own items. Right-clicking a tab offers **Move tab to new window** and **Close tab**.
 
 | Action | Shortcut | Where in the UI |
 |--------|----------|-----------------|
+| Copy / paste / select all (terminals through Ghostty's own actions, so its config applies; web pages; markdown text) | ⌘C / ⌘V / ⌘A | Edit menu |
+| Cut / undo / redo (text fields, e.g. a web pane's URL) | ⌘X / ⌘Z / ⇧⌘Z | Edit menu |
 | Split right (new terminal) | ⌘D | Pane menu |
 | Split down (new terminal) | ⇧⌘D | Pane menu |
 | New web / markdown / iOS pane right or below (markdown asks for a file; an iOS pane opens Settings) | — | Pane menu |
