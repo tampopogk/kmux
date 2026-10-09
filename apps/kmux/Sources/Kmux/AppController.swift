@@ -208,6 +208,8 @@ final class AppController: NSObject, NSApplicationDelegate {
             NSLog("kmux: not restoring the saved layout: \(why); moved to \(file.setAside() ?? "nowhere")")
             return false
         case .state(let state):
+            host.restoring = true
+            defer { host.restoring = false }
             do {
                 try core.restoreState(state)
             } catch {

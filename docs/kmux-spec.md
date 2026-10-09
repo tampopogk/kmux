@@ -125,7 +125,7 @@ flowchart LR
 - **Sockets:** all in `~/Library/Application Support/kmux/`. The default instance listens on `kmux.sock`, and one named `work` on `kmux-work.sock`.
 - **Starting one:** `kmux --instance work …` starts `work` if it isn't running. In the app, **kmux → New Instance** starts one named `2`, `3`, ….
 - **Telling them apart:** a named instance shows its name in its window titles (`Tab 1 — w1 · work`) and at the top of the kmux menu. `capabilities` reports the instance name.
-- **Inside a pane:** terminals get `KMUX_INSTANCE`, `KMUX_SOCKET` and `KMUX_PANE`, so `kmux` run in a pane controls the instance that owns it.
+- **Inside a pane:** terminals get `KMUX_INSTANCE`, `KMUX_SOCKET` and `KMUX_PANE`, so `kmux` run in a pane controls the instance that owns it. A terminal brought back by a restart ([3.6](#36-persistence)) also gets `KMUX_RESTORED=1`.
 - **Quitting:** an instance removes its socket when it quits, including when it is sent SIGTERM, SIGINT or SIGHUP.
 
 ### 3.5 Staying in the background
@@ -156,6 +156,7 @@ flowchart LR
     R -->|"anything else"| A["moved to ….json.bad"] --> N
 ```
 
+- **Products that keep terminals alive:** kmux itself never keeps a process across a restart. A product built on kmux can: its build names a **terminal wrapper** (`KMUX_TERMINAL_WRAPPER` in `scripts/build-kmux.sh`, a program inside the app). kmux then runs every terminal through it, `WRAPPER` for a shell or `WRAPPER -- $SHELL -c CMD` for a command, and a restored terminal gets `KMUX_RESTORED=1` (`KANNA_RESTORED` in Kanna), so the wrapper can reattach a session that outlived the app instead of starting a new one. kmux knows nothing else about it. Kanna's keeper works this way.
 - **Where:** one file per instance, next to its socket: `~/Library/Application Support/kmux/state-default.json` (`state-work.json` for an instance named `work`). A kmux on a socket elsewhere (`$KMUX_SOCKET`, as tests use) keeps it beside that socket: `/tmp/x.sock` → `/tmp/x.state.json`. Other brands use their own folder (Kanna: `…/kanna/`).
 - **When:** half a second after a change, and when kmux quits (⌘Q, SIGTERM, SIGINT or SIGHUP). Writes are atomic: a temporary file, flushed, then renamed over the old one.
 - **Format:** JSON with a `version` (now 1): the windows (with frames), their tabs and layout trees (pane IDs, exact sizes), focus and zoom, and the panes. A terminal also has a `session`, reserved for re-attaching hosted terminals later and unused for now.

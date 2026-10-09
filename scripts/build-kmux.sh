@@ -6,6 +6,8 @@
 #   KMUX_BRAND=kanna KMUX_BRAND_NAME=Kanna KMUX_BUNDLE_ID=dev.kanna.kanna KMUX_ICON=path/to.icns
 # The brand names the app, its socket folder and files, and the variables its
 # terminals get (KANNA_SOCKET, …), so it never meets a kmux the user runs.
+# KMUX_TERMINAL_WRAPPER names a program every terminal runs through (a path
+# inside the app's Contents, e.g. Helpers/kanna-keeper; see Brand.swift).
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -42,6 +44,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
 <key>CFBundleIdentifier</key><string>$bundle_id</string>
 <key>CFBundleName</key><string>$brand_name</string>
 <key>KmuxBrand</key><string>$brand</string>
+<key>KmuxTerminalWrapper</key><string>${KMUX_TERMINAL_WRAPPER:-}</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>0.1.0</string>
 <key>CFBundleVersion</key><string>0.1.0</string>

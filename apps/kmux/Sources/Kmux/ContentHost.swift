@@ -12,6 +12,9 @@ final class ContentHost: PaneHost {
     /// Terminals get `KMUX_INSTANCE`, `KMUX_SOCKET` and `KMUX_PANE` (`KANNA_…` in Kanna), so
     /// `kmux` run inside a pane talks to the kmux that owns it.
     var instance = Instance(name: Instance.defaultName)
+    /// Panes started now come back from the saved layout: their terminals
+    /// get `KMUX_RESTORED=1`, so a terminal wrapper can reattach a session.
+    var restoring = false
     private(set) var views: [String: PaneView] = [:]
     var onFocus: ((String) -> Void)?
     var onCloseRequest: ((String) -> Void)?
@@ -94,8 +97,9 @@ final class ContentHost: PaneHost {
             terminal.onFocus = { [weak self] in self?.onFocus?(id) }
             terminal.contextMenu = { [weak self] in self?.contextMenu?() }
             let brand = Brand.current
-            let environment = [(brand.variable("INSTANCE"), instance.name), (brand.variable("SOCKET"), instance.socketPath), (brand.variable("PANE"), id)]
-            started = runtime.attach(terminal, command: pane.command, cwd: pane.cwd, environment: environment)
+            var environment = [(brand.variable("INSTANCE"), instance.name), (brand.variable("SOCKET"), instance.socketPath), (brand.variable("PANE"), id)]
+            if restoring { environment.append((brand.variable("RESTORED"), "1")) }
+            started = runtime.attach(terminal, command: pane.command, cwd: pane.cwd, environment: environment, wrapper: brand.terminalWrapper)
             content = terminal
         }
         let view = PaneView(id: id, content: content)

@@ -415,4 +415,39 @@ sleep 1
 p_stop
 rm -f "$p_state" "$p_state.bad"
 
+# A product's terminal wrapper (Kanna's keeper): every terminal runs through
+# it, and terminals brought back after a restart are told so (KMUX_RESTORED).
+wrapper="$out/wrapper.sh"; wrap_log="$out/wrapper.log"; rm -f "$wrap_log"
+cat >"$wrapper" <<'SH'
+#!/bin/sh
+printf '%s restored=%s args=%s\n' "$KMUX_PANE" "${KMUX_RESTORED:-0}" "$*" >>"$WRAP_LOG"
+[ "$1" = "--" ] && shift
+[ $# -gt 0 ] && exec "$@"
+exec /bin/sh
+SH
+chmod +x "$wrapper"
+export KMUX_TERMINAL_WRAPPER="$wrapper" WRAP_LOG="$wrap_log"
+p_start
+p_cli open --name w --cmd "echo WRAPPED; exec sleep 600" >/dev/null
+for _ in $(seq 20); do [[ "$(field text <<<"$(p_raw '{"id":1,"cmd":"debug.text","args":{"pane":"w"}}')")" == *WRAPPED* ]] && break; sleep 0.25; done
+[[ "$(field text <<<"$(p_raw '{"id":1,"cmd":"debug.text","args":{"pane":"w"}}')")" == *WRAPPED* ]] || fail "a command should run through the wrapper"
+wrapped() { [[ -f "$wrap_log" ]] && wc -l <"$wrap_log" | tr -d ' ' || echo 0; }
+for _ in $(seq 40); do [[ "$(wrapped)" == 2 ]] && break; sleep 0.25; done # both terminals have started
+p_stop
+p_start
+for _ in $(seq 40); do [[ "$(wrapped)" == 4 ]] && break; sleep 0.25; done
+p_stop
+unset KMUX_TERMINAL_WRAPPER WRAP_LOG
+python3 - "$wrap_log" <<'PY' || fail "the wrapper should run every terminal, told when it is restored: $(cat "$wrap_log")"
+import sys
+lines = open(sys.argv[1]).read().splitlines()
+assert len(lines) == 4, lines
+first, cmd, again, cmd_again = lines
+assert first == "p1 restored=0 args=", first
+assert cmd.startswith("p2 restored=0 args=-- ") and "-c echo WRAPPED" in cmd, cmd
+assert again == "p1 restored=1 args=", again
+assert cmd_again.startswith("p2 restored=1 args=-- ") and "-c echo WRAPPED" in cmd_again, cmd_again
+PY
+rm -f "$p_state" "$p_state.bad"
+
 echo "e2e OK (snapshot: $out/two-panes.png)"
