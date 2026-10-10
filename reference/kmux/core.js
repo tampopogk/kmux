@@ -132,7 +132,6 @@ function findPane(id) {
 }
 const paneIds = node => !node ? [] : node.t === 'pane' ? [node.id] : node.kids.flatMap(k => paneIds(k.node));
 const dockOf = id => S.windows.find(w => w.dock?.pane === id);
-// The panes a window shows, in reading order: a dock on the left comes first, on the right last.
 function shownIds(w) {
   const ids = paneIds(activeTabOf(w)?.root);
   if (!w.dock) return ids;
@@ -214,8 +213,6 @@ function appendToTab(t, id) {
 }
 function autoDir(id) { return hooks.paneIsWide(id) ? 'row' : 'column'; }
 
-// Docking: a window has at most one docked pane. A pane docked where another
-// already is sends that one to a new tab (not shown) in the same window.
 const DOCK_WIDTH = 2 / 5;
 const EDGES = ['left', 'right'];
 function dockPane(id, w, edge) {

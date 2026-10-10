@@ -438,7 +438,6 @@ function renderWindow(w) {
   if (!w.dock) el.append(side());
   else if (w.zoomed === w.dock.pane) el.append(h('div', { class: 'stage' }, renderPane(S.panes[w.dock.pane], w)));
   else {
-    // The docked pane along the window's edge, the tab bar and the shown tab beside it.
     const dock = renderPane(S.panes[w.dock.pane], w);
     dock.classList.add('docked');
     const rest = side();
@@ -456,7 +455,6 @@ function sizeDock(w, dock, rest) {
   rest.style.flex = '1 1 0px';
 }
 
-// The docked pane's divider: dragging sets its width (a fraction of the window), snapping like a split's.
 function dockDivider(w, dock, rest) {
   const d = h('div', { class: 'dock-divider' });
   d.addEventListener('pointerdown', e => {
