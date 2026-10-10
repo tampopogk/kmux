@@ -526,7 +526,7 @@ async function handle(req) {
         if (args.dock != null && (args.split != null || args.size != null || args.tab)) throw kerr('bad_request', 'a docked pane takes no split, size or tab');
         const w = targetWin(args.window);
         const p = createPane(type, args);
-        if (args.dock) dockPane(p.id, w, args.dock);
+        if (args.dock) { dockPane(p.id, w, args.dock); w.zoomed = null; }
         else {
           place(p.id, w, { split: args.split || 'auto', size, tab: !!args.tab });
           findPane(p.id).tab.lastFocus = p.id;
