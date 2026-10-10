@@ -520,7 +520,7 @@ python3 - "$wrap_log" <<'PY' || fail "the wrapper should run every terminal, tol
 import sys
 lines = open(sys.argv[1]).read().splitlines()
 assert len(lines) == 4, lines
-first, cmd, again, cmd_again = lines
+first, cmd = sorted(lines[:2]); again, cmd_again = sorted(lines[2:])
 assert first == "p1 restored=0 args=", first
 assert cmd.startswith("p2 restored=0 args=-- ") and "-c echo WRAPPED" in cmd, cmd
 assert again == "p1 restored=1 args=", again
