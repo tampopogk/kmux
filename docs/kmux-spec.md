@@ -1,6 +1,6 @@
 # kmux — Specification
 
-> **Status:** v0.7 · **Last updated:** 2026-10-10
+> **Status:** v0.7 · **Last updated:** 2026-10-14
 >
 > **Reference model:** [`reference/kmux/index.html`](../reference/kmux/index.html). Open it in a browser and try it.
 > The model is the source of truth for kmux's design and behaviour. This document summarises what the model shows and lists what it doesn't answer yet. If the two disagree, the model wins, and this document should be fixed.
@@ -186,7 +186,7 @@ flowchart TB
 | One per window | Left (the default) or right. Docking another pane where one already is sends the old one to a new tab in that window, not shown. |
 | Width | A fraction of the window, default **2/5**. Dragging its divider snaps like a split's (and to 2/5); `resize` on the docked pane sets it. Saved with the window. |
 | Always shown | Switching tabs leaves it alone. The tab bar spans only the tabs' side. A window whose last tab closes keeps its docked pane. |
-| Closes only with its window | ⌘W in it does nothing, the Pane menu has no Close for it, and `close` on it fails with `docked: it closes with its window`. If its program exits it shows **exited**, and Restart (⌘R) starts it again. |
+| Closes only with its window | ⌘W in it does nothing, the Pane menu has no Close for it, and `close` on it fails with `docked: it closes with its window`. If its program exits it shows **exited**, and `restart` starts it again. |
 | Stays with its window | Moving or dragging a tab to another window leaves it. Moving the docked pane itself (`move` to a tab, a window or beside a pane, or a drag) undocks it. Dropping a pane on it swaps the two; its edges take no drops. |
 | Focus | Next/Previous Pane go through the window's shown panes in reading order: a left dock first, a right dock last. Switching tabs gives the keyboard to the shown tab, as before. |
 | Zoom | The focused pane fills the window, the docked pane or a tab's pane alike. |
@@ -269,7 +269,7 @@ The menu bar has **Edit**, **Pane**, **View** and **Window** menus. Right-clicki
 | Home button (iOS panes) | ⇧⌘H | Pane menu |
 | Zoom / unzoom | ⇧⌘↩ | Pane menu |
 | Move pane to new window | — | Pane menu |
-| Restart | ⌘R | Pane menu |
+| Reload (web panes: the page reloads in place) | ⌘R | Pane menu |
 | Close pane | ⌘W | Pane menu |
 | New tab | ⌘T | View menu, **+** |
 | Next / previous tab | ⇧⌘] / ⇧⌘[ | View menu |
@@ -285,6 +285,7 @@ The menu bar has **Edit**, **Pane**, **View** and **Window** menus. Right-clicki
 
 - Pane order is reading order: left to right, top to bottom. Pane, tab and window navigation all wrap around.
 - Moving to a pane also moves keyboard input to it.
+- Items that don't apply to the focused pane are greyed out, in the menu bar and the right-click menu: Open URL and Reload on anything but a web pane, Home on anything but an iOS pane, Close on a docked pane. In a terminal, ⌘R goes to the program like any other key.
 - Zoom is a window's mode: ⇧⌘↩ turns it on and off, and while it's on the focused pane fills the tab (in a window with a docked pane: the window). Moving around keeps it on: Next and Previous Pane and Tab, `focus`, and opening, closing or moving panes show whichever pane is focused after them.
 
 ---
@@ -426,6 +427,7 @@ $ kmux instances
 | Events | **None for now.** Clients that need to notice changes poll `list`. Events would let a client react straight away (a server pane exited, a command sent with `send` finished, a page moved) and can be added later. |
 | Pane identity | No pane names on hover. Panes stay chromeless; `kmux list` shows names. |
 | Persistence | **Layouts come back after kmux restarts**: windows, tabs, splits and sizes, pane names, and what each pane shows. kmux owns its terminals, so they come back as **new** terminals, started again in their working directory with their command; their output and processes are gone. Web panes reload their URL and iOS panes relaunch their app. Keeping processes alive across app or machine restarts is kanna's job, not kmux's. **Status:** built. Saved per instance as `state-<instance>.json` beside its socket, half a second after each change and on quit, and only restored if kmux wrote it ([3.6](#36-persistence)). Panes keep their IDs. Not yet: a terminal's scrollback, web and md back/forward history, scroll positions. |
+| Reload, not Restart | ⌘R is **Reload**, for web panes only: the page's own reload, so the pane stays on the page it's on. Nothing restarts a pane from a key or menu: in a terminal it would end an agent or a shell's program without asking, and an agent restarted with its first command (`claude --session-id ID 'first message'`) can refuse to start once its session has a conversation. Restarting a pane is `restart`, which is deliberate; a client that starts agents should make a pane's command the one that resumes its agent once it has started. |
 | Web navigation | Back/forward history is **off by default** for web panes and turned on per pane with `history` (`--history` in the CLI). Markdown panes always keep it (it's only file paths, so cheap). There are no history shortcuts, because ⌘[ and ⌘] move between panes and ⌘← ⌘→ would be taken from terminals. |
 | Performance | Measured by the benchmark utility, `kmux-bench` ([8.3](#83-performance)). |
 | Background | kmux launches in front; `--bg` keeps it behind the user's windows, for tests ([3.5](#35-staying-in-the-background)). |
