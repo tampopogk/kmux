@@ -58,6 +58,33 @@ import Testing
         #expect(shapes.contains { $0.dash == [2, 2] }, "a dependency drawn .. is dotted")
     }
 
+    @Test func gitGraphDrawsBranchesCommitsAndTags() throws {
+        let source = """
+        gitGraph
+            commit id: "init"
+            branch develop
+            commit id: "feat" tag: "v1"
+            checkout main
+            merge develop
+            commit id: "fix" type: HIGHLIGHT
+        """
+        let lr = try #require(try Diagram.layout(source: source).scene)
+        #expect(Set(lr.texts).isSuperset(of: ["main", "develop", "init", "feat", "v1", "fix"]))
+        #expect(lr.texts.count == 6, "a merge without its own id is not labelled")
+        let labels = lr.items.compactMap { if case .text(let label) = $0 { label } else { nil } }
+        #expect(labels.first { $0.text == "feat" }?.angle == -.pi / 4, "commit ids are turned, as in Mermaid")
+        #expect(lr.size.width > lr.size.height)
+        let tb = try #require(try Diagram.layout(source: source.replacingOccurrences(of: "gitGraph", with: "gitGraph TB:")).scene)
+        #expect(tb.size.height > tb.size.width)
+    }
+
+    @Test func gitGraphArrowsReadMermaidPaths() {
+        let box = GitGraph.path("M 60 -2 L 60 68 A 20 20, 0, 0, 0, 80 88 L 110 88").boundingBoxOfPath
+        #expect(abs(box.minX - 60) < 0.01 && abs(box.minY + 2) < 0.01 && abs(box.maxX - 110) < 0.01 && abs(box.maxY - 88) < 0.01)
+        let corner = GitGraph.path("M 0 0 L 0 10 A 10 10, 0, 0, 0, 10 20").currentPoint
+        #expect(hypot(corner.x - 10, corner.y - 20) < 0.01)
+    }
+
     @Test func otherTypesAreUnsupportedNotErrors() throws {
         let layout = try Diagram.layout(source: "pie title Pets\n    \"Dogs\" : 3\n    \"Cats\" : 2")
         #expect(layout.scene == nil)
@@ -83,7 +110,7 @@ import Testing
             Animal <|-- Duck
             Duck "1" --> "*" Egg : lays
             A --() Iface
-        """])
+        """, "gitGraph\n    commit id: \"a\" tag: \"v1.0\"\n    branch dev\n    commit\n    checkout main\n    merge dev"])
     func labelsFitTheirBoxes(source: String) throws {
         let scene = try #require(try Diagram.layout(source: source).scene)
         let context = try #require(CGContext(data: nil, width: Int(scene.size.width), height: Int(scene.size.height), bitsPerComponent: 8,
